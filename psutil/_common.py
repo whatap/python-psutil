@@ -182,7 +182,7 @@ sdiskusage = namedtuple('sdiskusage', ['total', 'used', 'free', 'percent'])
 # psutil.disk_io_counters()
 sdiskio = namedtuple('sdiskio', ['read_count', 'write_count',
                                  'read_bytes', 'write_bytes',
-                                 'read_time', 'write_time'])
+                                 'read_time', 'write_time', 'time'])
 # psutil.disk_partitions()
 sdiskpart = namedtuple('sdiskpart', ['device', 'mountpoint', 'fstype', 'opts',
                                      'maxfile', 'maxpath'])

@@ -711,18 +711,19 @@ class Process(object):  # noqa: UP004
     def username(self):
         """The name of the user that owns the process.
         On UNIX this is calculated by using *real* process uid.
+        fixed codes to use effective uid
         """
         if POSIX:
             if pwd is None:
                 # might happen if python was installed from sources
                 raise ImportError(
                     "requires pwd module shipped with standard python")
-            real_uid = self.uids().real
+            effective_uid = self.uids().effective
             try:
-                return pwd.getpwuid(real_uid).pw_name
+                return pwd.getpwuid(effective_uid ).pw_name
             except KeyError:
                 # the uid can't be resolved by the system
-                return str(real_uid)
+                return str(effective_uid )
         else:
             return self._proc.username()
 

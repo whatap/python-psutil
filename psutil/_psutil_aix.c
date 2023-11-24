@@ -843,13 +843,14 @@ psutil_disk_io_counters(PyObject *self, PyObject *args) {
 
     for (i = 0; i < disk_count; i++) {
         py_disk_info = Py_BuildValue(
-            "KKKKKK",
+            "KKKKKKK",
             diskt[i].__rxfers,
             diskt[i].xfers - diskt[i].__rxfers,
             diskt[i].rblks * diskt[i].bsize,
             diskt[i].wblks * diskt[i].bsize,
             diskt[i].rserv / 1000 / 1000,  // from nano to milli secs
-            diskt[i].wserv / 1000 / 1000   // from nano to milli secs
+            diskt[i].wserv / 1000 / 1000,   // from nano to milli secs
+            diskt[i].time
         );
         if (py_disk_info == NULL)
             goto error;
