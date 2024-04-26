@@ -180,7 +180,7 @@ sswap = namedtuple('sswap', ['total', 'used', 'free', 'percent', 'sin',
 # psutil.disk_usage()
 sdiskusage = namedtuple('sdiskusage', ['total', 'used', 'free', 'percent'])
 # psutil.disk_io_counters()
-sdiskio = namedtuple('sdiskio', ['read_count', 'write_count',
+sdiskio = namedtuple('', ['read_count', 'write_count',
                                  'read_bytes', 'write_bytes',
                                  'read_time', 'write_time', 'time'])
 # psutil.disk_partitions()
