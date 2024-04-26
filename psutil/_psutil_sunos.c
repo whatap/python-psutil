@@ -814,13 +814,14 @@ psutil_disk_io_counters(PyObject *self, PyObject *args) {
                     return PyErr_SetFromErrno(PyExc_OSError);;
                 }
                 py_disk_info = Py_BuildValue(
-                    "(IIKKLL)",
+                    "(IIKKLLI)",
                     kio.reads,
                     kio.writes,
                     kio.nread,
                     kio.nwritten,
                     kio.rtime / 1000 / 1000,  // from nano to milli secs
-                    kio.wtime / 1000 / 1000   // from nano to milli secs
+                    kio.wtime / 1000 / 1000,   // from nano to milli secs
+                    0 // aix에서 사용하는 필드
                 );
                 if (!py_disk_info)
                     goto error;
