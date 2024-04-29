@@ -41,6 +41,7 @@ except ImportError:
 
 from . import _common
 from ._common import AIX
+from ._common import HPUX
 from ._common import BSD
 from ._common import CONN_CLOSE
 from ._common import CONN_CLOSE_WAIT
@@ -94,6 +95,9 @@ from ._compat import SubprocessTimeoutExpired as _SubprocessTimeoutExpired
 from ._compat import long
 
 
+if HPUX:
+    POSIX = False
+
 if LINUX:
     # This is public API and it will be retrieved from _pslinux.py
     # via sys.modules.
@@ -140,6 +144,9 @@ elif AIX:
     # This is public API and it will be retrieved from _pslinux.py
     # via sys.modules.
     PROCFS_PATH = "/proc"
+
+elif HPUX:
+    from .import _pshpux as _psplatform
 
 else:  # pragma: no cover
     raise NotImplementedError('platform %s is not supported' % sys.platform)

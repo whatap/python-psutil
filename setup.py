@@ -45,6 +45,7 @@ HERE = os.path.abspath(os.path.dirname(__file__))
 # ...so we can import _common.py and _compat.py
 sys.path.insert(0, os.path.join(HERE, "psutil"))
 
+from _common import HPUX  # NOQA
 from _common import AIX  # NOQA
 from _common import BSD  # NOQA
 from _common import FREEBSD  # NOQA
@@ -59,6 +60,8 @@ from _common import hilite  # NOQA
 from _compat import PY3  # NOQA
 from _compat import which  # NOQA
 
+if HPUX:
+    POSIX = False
 
 PYPY = '__pypy__' in sys.builtin_module_names
 PY36_PLUS = sys.version_info[:2] >= (3, 6)
@@ -326,6 +329,15 @@ elif AIX:
         libraries=['perfstat'],
         define_macros=macros,
         **py_limited_api)
+elif HPUX:
+    print ("hpux")
+    macros.append(("PSUTIL_HPUX", 1))
+    ext = Extension(
+        'psutil._psutil_hpux',
+        sources=sources + ['psutil/_psutil_hpux.c'],
+        define_macros=macros,
+        **py_limited_api)
+
 
 else:
     sys.exit('platform %s is not supported' % sys.platform)
