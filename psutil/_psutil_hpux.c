@@ -11,6 +11,9 @@
 #include <mntent.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <fcntl.h>
 
 #include <Python.h>
 #include "_psutil_common.h"
@@ -285,11 +288,11 @@ static PyObject *psutil_disk_info(PyObject *self,  PyObject *args) {
             }
 
             PyDict_SetItemString(py_retdict, device , py_disk_info);
+            Py_CLEAR(py_disk_info);
         }
     }
 
     closedir(dp);
-    Py_CLEAR(py_disk_info);
 
     return py_retdict;
 
@@ -316,9 +319,9 @@ static PyObject *psutil_disk_io_time(PyObject *self,  PyObject *args) {
             continue;
 
         PyDict_SetItemString(py_retdict, device, py_disk_info);
+        Py_CLEAR(py_disk_info);
     }
 
-    Py_CLEAR(py_disk_info);
 
     return py_retdict;
 }
@@ -366,6 +369,8 @@ static PyObject *psutil_disk_io_counters(PyObject *self,  PyObject *args) {
                 continue;
 
             PyDict_SetItemString(py_retdict, key, py_disk_info);
+
+            Py_CLEAR(py_disk_info);
         }
     }
     /*
@@ -391,7 +396,6 @@ static PyObject *psutil_disk_io_counters(PyObject *self,  PyObject *args) {
                 py_disk_info))
         goto error;
         */
-    Py_CLEAR(py_disk_info);
 
     endmntent(mounts);
     return py_retdict;
@@ -404,9 +408,74 @@ error:
 
 }
 
+
+static PyObject *psutil_net_io_counters(PyObject *self, PyObject *args) {
+    int rtv; 
+    int fd; 
+    int val = 0; 
+    int ret; 
+    unsigned int ulen; 
+    int count = -1; 
+
+    struct nmparms p; 
+    
+
+    if ((fd = open_mib("/dev/ip", O_RDONLY, 0, NM_ASYNC_OFF)) < 0) { 
+        return NULL; 
+    }  
+    p.objid = ID_ifNumber;   
+    p.buffer = (void *)&val; 
+    ulen = sizeof(int); 
+    p.len = &ulen; 
+    if((ret = get_mib_info(fd, &p)) == 0) 
+        count = val; 
+    close_mib(fd); 
+
+    nmapi_phystat *ifptr;
+    ulen = (unsigned int) count * sizeof(nmapi_phystat);
+    ifptr = (nmapi_phystat *)malloc(ulen);
+
+    if ((ret = get_physical_stat(ifptr, &ulen)) < 0) {
+        free(ifptr);
+        return NULL;
+    }
+
+    int i = 0;
+    
+    PyObject *py_retdict = PyDict_New();
+    PyObject *py_net_info = NULL;
+    mib_ifEntry *mib;
+
+    for (; i < count; i++) {
+        if(ifptr[i].nm_device[0] == '\0') {
+            continue;
+        }
+        mib = &ifptr[i].if_entry;
+        py_net_info = Py_BuildValue(
+                "(KKKKiiii)",
+                mib->ifOutOctets,
+                mib->ifInOctets,
+                mib->ifOutUcastPkts + mib->ifOutNUcastPkts,
+                mib->ifInUcastPkts + mib->ifInNUcastPkts,
+                mib->ifInErrors,
+                mib->ifOutErrors,
+                mib->ifInDiscards,
+                mib->ifOutDiscards
+                );
+        if (!py_net_info)
+            continue;
+
+        PyDict_SetItemString(py_retdict, ifptr[i].nm_device, py_net_info);
+        Py_DECREF(py_net_info);
+    }
+
+    free(ifptr);
+    return py_retdict;
+}
+
 /*
-int getCpuCoreNum() {
-    struct pst_dynamic psd;
+   int getCpuCoreNum() {
+   struct pst_dynamic psd;
     if (pstat_getdynamic(&psd, sizeof(psd), (size_t)1, 0) == -1) {
         perror("pstat_getdynamic failed");
         return -1;
@@ -427,6 +496,7 @@ PsutilMethods[] = {
     {"disk_io_counters", psutil_disk_io_counters, METH_VARARGS},
     {"disk_io_info", psutil_disk_info, METH_VARARGS},
     {"disk_io_time", psutil_disk_io_time, METH_VARARGS},
+    {"net_io_counters", psutil_net_io_counters, METH_VARARGS},
     {NULL, NULL, 0, NULL}
 };
 

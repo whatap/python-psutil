@@ -171,6 +171,8 @@ def disk_io_counters(perdisk=False):
         ret[keyArr[0]] = (v[0], v[1], v[2], v[3], 0, 0, times)
 
 
+def net_io_counters(pernic=False):
+    ret = cext.net_io_counters()
     return ret
 
 

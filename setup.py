@@ -336,6 +336,7 @@ elif HPUX:
         'psutil._psutil_hpux',
         sources=sources + ['psutil/_psutil_hpux.c'],
         define_macros=macros,
+        libraries=['nm'],
         **py_limited_api)
 
 
