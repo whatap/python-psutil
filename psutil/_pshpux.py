@@ -1,4 +1,5 @@
-
+import subprocess
+import functools
 import os
 import sys
 import re
@@ -6,6 +7,15 @@ import re
 from collections import namedtuple
 
 from . import _common
+from ._common import get_procfs_path
+from ._common import memoize
+from ._common import memoize_when_activated
+from ._common import NoSuchProcess
+from ._common import ZombieProcess
+from ._compat import FileNotFoundError
+from ._compat import PermissionError
+from ._compat import ProcessLookupError
+from ._compat import which
 from . import _psutil_hpux as cext
 
 
@@ -180,13 +190,188 @@ def net_io_counters(pernic=False):
 #
 #
 
+
+def wrap_exceptions(fun):
+    """Call callable into a try/except clause and translate ENOENT,
+    EACCES and EPERM in NoSuchProcess or AccessDenied exceptions.
+    """
+    @functools.wraps(fun)
+    def wrapper(self, *args, **kwargs):
+        try:
+            return fun(self, *args, **kwargs)
+        except (FileNotFoundError, ProcessLookupError):
+            # ENOENT (no such file or directory) gets raised on open().
+            # ESRCH (no such process) can get raised on read() if
+            # process is gone in meantime.
+            if not pid_exists(self.pid):
+                raise NoSuchProcess(self.pid, self._name)
+            else:
+                raise ZombieProcess(self.pid, self._name, self._ppid)
+        except PermissionError:
+            raise AccessDenied(self.pid, self._name)
+        except RuntimeError:
+            raise NoSuchProcess(self.pid, self._name)
+
+    return wrapper
+
+
+
+def pids():
+    """Returns a list of PIDs currently running on the system."""
+    process = subprocess.Popen(['ps', '-e'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    stdout, stderr = process.communicate()
+    processes = stdout.decode('utf-8').split('\n')
+
+    pid_list = []
+
+    for process in processes[1:]:
+        if process.strip():
+            pid = int(process.split()[0])
+            if pid == 0: continue
+            pid_list.append(pid)
+
+    return pid_list
+
+
+
+kinfo_proc_map = dict(
+        pid=0,
+        ppid=1,
+        utime=2,
+        stime=3,
+        pcpu=4,
+        rss=5,
+        totalIO=6,
+        cmdline=7,
+        username=8,
+        status=9,
+        starttime=10,
+        inblock=11,
+        outblock=12,
+)
+
+pcputimes = namedtuple('pcputimes', ['user', 'system', 'pcpu'])
+pmem = namedtuple('pmem', ['rss'])
+
+pio = namedtuple('pio', ['read_count', 'write_count',
+                         'read_bytes', 'write_bytes',
+                         'total_bytes'])
+
+PROC_STATUSES = {
+    cext.SSLEEP: _common.STATUS_SLEEPING,
+    cext.SRUN: _common.STATUS_RUNNING,
+    cext.SSTOP: _common.STATUS_STOPPED,
+    cext.SZOMB: _common.STATUS_ZOMBIE,
+    cext.SIDL: _common.STATUS_IDLE,
+    cext.SOTHER: _common.STATUS_RUNNING
+}
+
+
 class Process:
-    __slots__ = ["pid", "_name", "_ppid", "_procfs_path", "_cache"]
+    """Wrapper class around underlying C implementation."""
+
+    __slots__ = ["pid", "_name", "_ppid", "_cache"]
 
     def __init__(self, pid):
         self.pid = pid
         self._name = None
         self._ppid = None
-        self._procfs_path = get_procfs_path()
+
+    @wrap_exceptions
+    def create_time(self):
+        return self.oneshot_info()[kinfo_proc_map['starttime']]
+
+    @wrap_exceptions
+    @memoize_when_activated
+    def oneshot_info(self):
+        ret = cext.proc_oneshot_info(self.pid)
+        return ret
+
+    def oneshot_enter(self):
+        self.oneshot_info.cache_activate(self)
+
+    def oneshot_exit(self):
+        self.oneshot_info.cache_deactivate(self)
+
+    @wrap_exceptions
+    def ppid(self):
+        self._ppid = self.oneshot_info()[kinfo_proc_map['ppid']]
+        return self._ppid
+
+    @wrap_exceptions
+    def name(self):
+        cmd = self.cmdline()
+        if len(cmd) == 0:
+            return ""
+        exe = cmd[0]
+        return exe.split('/')[-1]
 
 
+    @wrap_exceptions
+    def exe(self):
+        return self.name()
+
+    @wrap_exceptions
+    def cmdline(self):
+        cmd = self.oneshot_info()[kinfo_proc_map['cmdline']]
+        if cmd == "":
+            return []
+        return cmd.split()
+
+    @wrap_exceptions
+    def status(self):
+        code = self.oneshot_info()[kinfo_proc_map['status']]
+        return PROC_STATUSES.get(code, '?')
+
+    @wrap_exceptions
+    def username(self):
+
+        return self.oneshot_info()[kinfo_proc_map['username']]
+
+    @wrap_exceptions
+    def cwd(self):
+        return "cwd"
+    
+    @wrap_exceptions
+    def nice_get(self):
+        return "nice_get"
+    
+    @wrap_exceptions
+    def nice_set(self):
+        return "nice_set"
+
+    @wrap_exceptions
+    def uids(self):
+        return "uids"
+
+    @wrap_exceptions
+    def gids(self):
+        return "gids"
+
+    @wrap_exceptions
+    def memory_info(self):
+        meminfo = (self.oneshot_info()[kinfo_proc_map['rss']])
+        return pmem(meminfo)
+
+    @wrap_exceptions
+    def cpu_times(self):
+        v = self.oneshot_info()
+        times = (v[kinfo_proc_map['utime']], v[kinfo_proc_map['stime']], v[kinfo_proc_map['pcpu']])
+        print times
+        return pcputimes(*times)
+
+
+    @wrap_exceptions
+    def io_counters(self):
+        v = self.oneshot_info()
+        return pio(0, 0, v[kinfo_proc_map['inblock']], v[kinfo_proc_map['outblock']], v[kinfo_proc_map['totalIO']])
+
+
+    @wrap_exceptions
+    def open_files(self):
+        rets = cext.proc_open_file(self.pid)
+        retlist = []
+        for path, fd in rets.items():
+            retlist.append(_common.popenfile(path, int(fd)))
+        return retlist 
+        

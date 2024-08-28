@@ -16,7 +16,9 @@
 #include <fcntl.h>
 
 #include <Python.h>
+#include <pwd.h>
 #include "_psutil_common.h"
+
 
 static PyObject *psutil_proc_cpu_num(PyObject *self, PyObject *args) {
     struct pst_dynamic psd;
@@ -373,29 +375,6 @@ static PyObject *psutil_disk_io_counters(PyObject *self,  PyObject *args) {
             Py_CLEAR(py_disk_info);
         }
     }
-    /*
-    if (pstat_getlv(&psl, sizeof(psl), 0, 1) == -1) {
-        perror("pstat_getlv failed");
-        goto error;
-    }
-
-    py_disk_info = Py_BuildValue(
-            "KKKKKKK",
-            psl.psl_rxfer,
-            psl.psl_wxfer,
-            psl.psl_rcount,
-            psl.psl_wcount,
-            0
-
-            );
-
-    if (!py_disk_info)
-        goto error;
-
-    if (PyDict_SetItemString(py_retdict, "TEST",
-                py_disk_info))
-        goto error;
-        */
 
     endmntent(mounts);
     return py_retdict;
@@ -410,7 +389,6 @@ error:
 
 
 static PyObject *psutil_net_io_counters(PyObject *self, PyObject *args) {
-    int rtv; 
     int fd; 
     int val = 0; 
     int ret; 
@@ -473,6 +451,34 @@ static PyObject *psutil_net_io_counters(PyObject *self, PyObject *args) {
     return py_retdict;
 }
 
+#define PROC_LEN 16
+static PyObject *psutil_pids(PyObject *self, PyObject *args) {
+
+    struct pst_status pss[100];
+
+    PyObject *py_retdict = PyDict_New();
+    PyObject *py_pid_info = NULL;
+    char pid[16];
+
+    int i = 1;
+
+    int ret = pstat_getproc(pss, sizeof(pss[0]), 0, 1);
+    while (pstat_getproc(pss, sizeof(pss[0]), 0, i++) > 0) {
+        py_pid_info = Py_BuildValue(
+                "i",
+                pss[0].pst_pid
+                );
+        if (!py_pid_info)
+            continue;
+
+        snprintf(pid, sizeof(pid), "%d", pss[0].pst_pid);
+        PyDict_SetItemString(py_retdict, pid, py_pid_info);
+        Py_CLEAR(py_pid_info);
+    }
+
+    return py_retdict;
+}
+
 /*
    int getCpuCoreNum() {
    struct pst_dynamic psd;
@@ -483,6 +489,117 @@ static PyObject *psutil_net_io_counters(PyObject *self, PyObject *args) {
     return psd.psd_proc_cnt;
 }
 */
+
+static PyObject *psutil_proc_open_file(PyObject *self, PyObject *args) {
+    pid_t pid;
+
+    if (! PyArg_ParseTuple(args, _Py_PARSE_PID, &pid)){
+        PyErr_SetString(PyExc_RuntimeError, "pid error");
+        return NULL;
+    }
+
+    struct pst_fileinfo2 psf;
+    int i = 0;
+    int fd_count;
+
+
+    PyObject *py_retdict = PyDict_New();
+    PyObject *py_file_info = NULL;
+
+    int count = 0;
+
+    while ((fd_count = pstat_getfile2(&psf, sizeof(psf), 1, i, pid)) > 0) {
+        i++;
+        char filename[64];
+        memset(filename, 0, sizeof(filename));
+        //PyObject * pFileName= NULL;
+
+        count = pstat_getpathname(filename, 64, &(psf.psf_fid));
+        if (count <= 0) {
+            continue;
+        }
+        
+        //pFileName = PyUnicode_DecodeFSDefault(filename);
+        py_file_info = Py_BuildValue(
+                "i",
+                psf.psf_fd
+                );
+
+        if (!py_file_info)
+            continue;
+
+        PyDict_SetItemString(py_retdict, filename, py_file_info);
+        Py_DECREF(py_file_info);
+    }
+
+    return py_retdict;
+}
+
+
+static PyObject *psutil_proc_oneshot_info(PyObject *self, PyObject *args) {
+    pid_t pid;
+
+    if (! PyArg_ParseTuple(args, _Py_PARSE_PID, &pid)){
+        PyErr_SetString(PyExc_RuntimeError, "pid error");
+        return NULL;
+    }
+
+    struct pst_static pst;
+
+    if (pstat_getstatic(&pst, sizeof(pst), (size_t)1, 0) == -1 ) {
+        PyErr_SetString(PyExc_RuntimeError, "pstat_getstatic failed");
+        return NULL;
+    }
+
+    struct pst_dynamic psd;
+    if (pstat_getdynamic(&psd, sizeof(psd), (size_t)1, 0) == -1) {
+        perror("pstat_getdynamic failed");
+        return NULL;
+    }
+
+    struct pst_status pss;
+
+    PyObject * cmdline = NULL;
+    PyObject * username = NULL;
+    char name[32] = {0, };
+
+    if (pstat_getproc(&pss, sizeof(pss), 0, pid) > 0) {
+
+        cmdline = PyUnicode_DecodeFSDefault(pss.pst_cmd);
+        struct passwd *pw = getpwuid(pss.pst_uid);
+        if (pw != NULL) {
+            snprintf(name, sizeof(name), pw->pw_name);
+        } else {
+            snprintf(name, sizeof(name), "unknown");
+        }
+        
+        username = PyUnicode_DecodeFSDefault(name);
+        PyObject *value = Py_BuildValue(
+                "iiiifKKSSiiii",
+                pss.pst_pid,
+                pss.pst_ppid,
+                pss.pst_utime,
+                pss.pst_stime,
+                pss.pst_pctcpu * 100 / psd.psd_proc_cnt, // cpu 
+                pss.pst_rssize * pst.page_size,
+                pss.pst_ioch,
+                cmdline,
+                username,
+                pss.pst_stat,
+                pss.pst_start,
+                pss.pst_inblock,
+                pss.pst_oublock
+                );
+
+        Py_DECREF(cmdline);
+        Py_DECREF(username);
+        return value;
+    }
+    PyErr_SetString(PyExc_RuntimeError, "pstat_getproc failed");
+    return NULL;
+
+}
+
 static PyMethodDef
 PsutilMethods[] = {
     {"proc_cpu_num", psutil_proc_cpu_num, METH_VARARGS},
@@ -497,12 +614,22 @@ PsutilMethods[] = {
     {"disk_io_info", psutil_disk_info, METH_VARARGS},
     {"disk_io_time", psutil_disk_io_time, METH_VARARGS},
     {"net_io_counters", psutil_net_io_counters, METH_VARARGS},
+    {"check_pid_range", psutil_check_pid_range, METH_VARARGS}, 
+    {"proc_oneshot_info", psutil_proc_oneshot_info, METH_VARARGS},
+    {"proc_open_file", psutil_proc_open_file, METH_VARARGS},
     {NULL, NULL, 0, NULL}
 };
 
 void init_psutil_hpux(void) {
     PyObject *module = Py_InitModule("_psutil_hpux", PsutilMethods);
     PyModule_AddIntConstant(module, "version", PSUTIL_VERSION);
+
+    PyModule_AddIntConstant(module, "SSLEEP", PS_SLEEP);
+    PyModule_AddIntConstant(module, "SRUN", PS_RUN);
+    PyModule_AddIntConstant(module, "SSTOP", PS_STOP);
+    PyModule_AddIntConstant(module, "SZOMB", PS_ZOMBIE);
+    PyModule_AddIntConstant(module, "SIDL", PS_IDLE);
+    PyModule_AddIntConstant(module, "SOTHER", PS_OTHER);
 }
 
 
