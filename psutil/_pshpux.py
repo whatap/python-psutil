@@ -179,6 +179,7 @@ def disk_io_counters(perdisk=False):
             times[pv_match] = ioTimeMap[pv_match]
 
         ret[keyArr[0]] = (v[0], v[1], v[2], v[3], 0, 0, times)
+    return ret
 
 
 def net_io_counters(pernic=False):
