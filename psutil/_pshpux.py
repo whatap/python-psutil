@@ -358,7 +358,6 @@ class Process:
     def cpu_times(self):
         v = self.oneshot_info()
         times = (v[kinfo_proc_map['utime']], v[kinfo_proc_map['stime']], v[kinfo_proc_map['pcpu']])
-        print times
         return pcputimes(*times)
 
 

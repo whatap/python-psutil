@@ -330,7 +330,6 @@ elif AIX:
         define_macros=macros,
         **py_limited_api)
 elif HPUX:
-    print ("hpux")
     macros.append(("PSUTIL_HPUX", 1))
     ext = Extension(
         'psutil._psutil_hpux',
