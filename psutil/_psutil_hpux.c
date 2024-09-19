@@ -248,23 +248,33 @@ static PyObject *psutil_boot_time(PyObject *self, PyObject *args) {
 
 
 static PyObject *psutil_disk_info(PyObject *self,  PyObject *args) {
+    const char *disk_path = "/dev/disk";
+    const char *dsk_path = "/dev/dsk";
+    const char *dir_path = NULL;
+    DIR *dp;
+
+    if (access(disk_path, F_OK) == 0) {
+        dp = opendir(disk_path);
+        dir_path = disk_path;
+        if (dp == NULL) {
+            return NULL;
+        }
+    } else if (access(dsk_path, F_OK) == 0) {
+        dp = opendir(dsk_path);
+        dir_path = dsk_path;
+        if (dp == NULL) {
+            return NULL;
+        }
+    } else {
+        return NULL;
+    }
     
     PyObject *py_retdict = PyDict_New();
     PyObject *py_disk_info = NULL;
 
-    const char *dir_path = "/dev/dsk";
     struct dirent *entry;
-    DIR *dp;
 
     struct stat sb;
-
-    dp = opendir(dir_path);
-    if (dp == NULL) {
-        Py_XDECREF(py_disk_info);
-        Py_DECREF(py_retdict);
-        return NULL;
-    }
-
 
     while ((entry = readdir(dp))) {
         char path[512];
@@ -451,6 +461,7 @@ static PyObject *psutil_net_io_counters(PyObject *self, PyObject *args) {
     return py_retdict;
 }
 
+/*
 #define PROC_LEN 16
 static PyObject *psutil_pids(PyObject *self, PyObject *args) {
 
@@ -479,7 +490,6 @@ static PyObject *psutil_pids(PyObject *self, PyObject *args) {
     return py_retdict;
 }
 
-/*
    int getCpuCoreNum() {
    struct pst_dynamic psd;
     if (pstat_getdynamic(&psd, sizeof(psd), (size_t)1, 0) == -1) {

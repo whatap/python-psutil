@@ -115,37 +115,60 @@ def swap_memory():
 #
 #disk_io_counters = cext.disk_io_counters
 
-
-def getLvmMap():
-    lvmtabFile = open('/etc/lvmtab', 'rb')
-    if not lvmtabFile:
+def getDsfMap():
+    if not os.path.isdir('/dev/disk'):
         return None
 
-    lvm = lvmtabFile.read()
-    lvm = re.findall("[^\x00-\x1F\x7F-\xFF]{4,}", lvm)
+    ioscans = subprocess.Popen(['ioscan', '-m', 'dsf'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    stdout, stderr = ioscans.communicate()
+    dsfs= stdout.split('\n')
+    device_map = {}
+    rdisk_pattern = re.compile('/dev/rdisk')
+    rdsk_pattern = re.compile('/dev/rdsk')
+    for dsf in dsfs[2:]:
+        columns = dsf.split()
+        if len(columns) != 2:
+            continue
+        key = rdisk_pattern.sub('/dev/disk', columns[0])
+        value = rdsk_pattern.sub('/dev/dsk', columns[1])
+        device_map[key] = value
+    return device_map
 
+
+def getLvmMap():
+    try:
+        with open('/etc/lvmtab', 'rb') as lvmtabFile:
+            lvm = lvmtabFile.read()
+    except IOError:
+        return None
+    lvm = re.findall(r"[^\x00-\x1F\x7F-\xFF]{4,}", lvm)
     vg_map = {}
     current_vg = None
-
     vg_pattern = re.compile(r'/dev/vg\w+')
-    pv_pattern = re.compile(r'/dev/dsk/\w+')
+    pv_dsk_pattern = re.compile(r'/dev/dsk/\w+')
+    pv_disk_pattern = re.compile(r'/dev/disk/disk\d+_p\d+')
 
     for line in lvm:
-        vg_match = vg_pattern.match(line.strip())
-        pv_match = pv_pattern.match(line.strip())
-
+        line = line.strip()
+        vg_match = vg_pattern.match(line)
         if vg_match:
             current_vg = vg_match.group(0)
             vg_map[current_vg] = []
-        elif pv_match and current_vg:
-            pv = pv_match.group(0)
-            vg_map[current_vg].append(pv)
+            continue
 
-    lvmtabFile.close()
+        pv_disk_match = pv_disk_pattern.match(line)
+        if pv_disk_match and current_vg:
+            pv = pv_disk_match.group(0)
+            vg_map[current_vg].append(pv)
+            continue
+
+        pv_dsk_match = pv_dsk_pattern.match(line)
+        if pv_dsk_match and current_vg:
+            pv = pv_dsk_match.group(0)
+            vg_map[current_vg].append(pv)
+            continue
 
     return vg_map
-
-
 
 
 def disk_io_counters(perdisk=False):
@@ -157,12 +180,16 @@ def disk_io_counters(perdisk=False):
 
     ioTimeMap = {}
     for k, v in times.items():
-        ioTimeMap[infos[k]] = v
+        try:
+            ioTimeMap[infos[k]] = v
+        except KeyError:
+            continue
 
     ret = {}
 
     vg_pattern = re.compile(r'/dev/vg\w+')
-    pv_pattern = re.compile(r'(/dev/dsk/c\d+t\d+d\d+)')
+    pv_dsk_pattern = re.compile(r'(/dev/dsk/c\d+t\d+d\d+)')
+    pv_disk_pattern = re.compile(r'(/dev/disk/disk\d+)')
     
     for k, v in ioCounters.items():
         keyArr = k.split('|')
@@ -175,9 +202,18 @@ def disk_io_counters(perdisk=False):
 
         times = {}
         for pv in pvs:
-            pv_match = pv_pattern.match(pv).group(1)
-            times[pv_match] = ioTimeMap[pv_match]
+            pv_disk_match = pv_disk_pattern.match(pv)
+            if pv_disk_match:
+                pv_match = pv_disk_match.group(1)
+                times[pv_match] = ioTimeMap[pv_match]
+                continue
 
+            pv_dsk_match = pv_dsk_pattern.match(pv)
+            if pv_dsk_match:
+                pv_match = pv_dsk_match.group(1)
+                times[pv_match] = ioTimeMap[pv_match]
+                continue
+            
         ret[keyArr[0]] = (v[0], v[1], v[2], v[3], 0, 0, times)
     return ret
 
