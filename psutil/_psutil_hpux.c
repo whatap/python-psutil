@@ -545,25 +545,11 @@ static PyObject *psutil_proc_open_file(PyObject *self, PyObject *args) {
     return py_retdict;
 }
 
-
 static PyObject *psutil_proc_oneshot_info(PyObject *self, PyObject *args) {
     pid_t pid;
 
     if (! PyArg_ParseTuple(args, _Py_PARSE_PID, &pid)){
         PyErr_SetString(PyExc_RuntimeError, "pid error");
-        return NULL;
-    }
-
-    struct pst_static pst;
-
-    if (pstat_getstatic(&pst, sizeof(pst), (size_t)1, 0) == -1 ) {
-        PyErr_SetString(PyExc_RuntimeError, "pstat_getstatic failed");
-        return NULL;
-    }
-
-    struct pst_dynamic psd;
-    if (pstat_getdynamic(&psd, sizeof(psd), (size_t)1, 0) == -1) {
-        perror("pstat_getdynamic failed");
         return NULL;
     }
 
@@ -574,7 +560,6 @@ static PyObject *psutil_proc_oneshot_info(PyObject *self, PyObject *args) {
     char name[32] = {0, };
 
     if (pstat_getproc(&pss, sizeof(pss), 0, pid) > 0) {
-
         cmdline = PyUnicode_DecodeFSDefault(pss.pst_cmd);
         struct passwd *pw = getpwuid(pss.pst_uid);
         if (pw != NULL) {
@@ -590,8 +575,8 @@ static PyObject *psutil_proc_oneshot_info(PyObject *self, PyObject *args) {
                 pss.pst_ppid,
                 pss.pst_utime,
                 pss.pst_stime,
-                pss.pst_pctcpu * 100 / psd.psd_proc_cnt, // cpu 
-                pss.pst_rssize * pst.page_size,
+                pss.pst_pctcpu * 100, // / psd.psd_proc_cnt, // cpu 
+                pss.pst_rssize,  // * pst.page_size,
                 pss.pst_ioch,
                 cmdline,
                 username,
@@ -607,7 +592,51 @@ static PyObject *psutil_proc_oneshot_info(PyObject *self, PyObject *args) {
     }
     PyErr_SetString(PyExc_RuntimeError, "pstat_getproc failed");
     return NULL;
+}
 
+static PyObject *psutil_proc_create_time(PyObject *self, PyObject *args) {
+    pid_t pid;
+
+    if (! PyArg_ParseTuple(args, _Py_PARSE_PID, &pid)){
+        PyErr_SetString(PyExc_RuntimeError, "pid error");
+        return NULL;
+    }
+
+    struct pst_status pss;
+
+    if (pstat_getproc(&pss, sizeof(pss), 0, pid) > 0) {
+        PyObject *value = Py_BuildValue(
+                "i",
+                pss.pst_start
+                );
+        return value;
+    }
+    PyErr_SetString(PyExc_RuntimeError, "pstat_getproc failed");
+    return NULL;
+}
+
+//
+static PyObject *psutil_proc_disk_io(PyObject *self, PyObject *args) {
+    pid_t pid;
+
+    if (! PyArg_ParseTuple(args, _Py_PARSE_PID, &pid)){
+        PyErr_SetString(PyExc_RuntimeError, "pid error");
+        return NULL;
+    }
+
+    struct pst_status pss;
+
+    if (pstat_getproc(&pss, sizeof(pss), 0, pid) > 0) {
+        PyObject *value = Py_BuildValue(
+                "Kii",
+                pss.pst_ioch,
+                pss.pst_inblock,
+                pss.pst_oublock
+                );
+        return value;
+    }
+    PyErr_SetString(PyExc_RuntimeError, "pstat_getproc failed");
+    return NULL;
 }
 
 static PyMethodDef
@@ -626,6 +655,8 @@ PsutilMethods[] = {
     {"net_io_counters", psutil_net_io_counters, METH_VARARGS},
     {"check_pid_range", psutil_check_pid_range, METH_VARARGS}, 
     {"proc_oneshot_info", psutil_proc_oneshot_info, METH_VARARGS},
+    {"proc_disk_io", psutil_proc_disk_io, METH_VARARGS},
+    {"proc_create_time", psutil_proc_create_time, METH_VARARGS},
     {"proc_open_file", psutil_proc_open_file, METH_VARARGS},
     {NULL, NULL, 0, NULL}
 };

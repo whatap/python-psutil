@@ -316,7 +316,7 @@ class Process:
 
     @wrap_exceptions
     def create_time(self):
-        return self.oneshot_info()[kinfo_proc_map['starttime']]
+        return cext.proc_create_time(self.pid)
 
     @wrap_exceptions
     @memoize_when_activated
@@ -395,7 +395,6 @@ class Process:
         v = self.oneshot_info()
         times = (v[kinfo_proc_map['utime']], v[kinfo_proc_map['stime']], v[kinfo_proc_map['pcpu']])
         return pcputimes(*times)
-
 
     @wrap_exceptions
     def io_counters(self):
