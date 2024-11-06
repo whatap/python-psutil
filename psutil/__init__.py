@@ -282,6 +282,14 @@ def _pprint_secs(secs):
 # --- Process class
 # =====================================================================
 
+if hasattr(_psplatform, "proc_total_info"):
+    def proc_total_info():
+        return _psplatform.proc_total_info()
+
+if hasattr(_psplatform, "proc_detail_info"):
+    def proc_detail_info():
+        return _psplatform.proc_detail_info()
+
 
 class Process(object):  # noqa: UP004
     """Represents an OS process with the given PID.

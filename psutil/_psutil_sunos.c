@@ -40,6 +40,15 @@
 #include <sys/tihdr.h>
 #include <stropts.h>
 #include <inet/tcp.h>
+
+
+#include <dirent.h>
+#include <string.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <pwd.h>
+
+
 #ifndef NEW_MIB_COMPLIANT
 /*
  * Solaris introduced NEW_MIB_COMPLIANT macro with Update 4.
@@ -88,6 +97,30 @@ psutil_file_to_struct(char *path, void *fstruct, size_t size) {
     return nbytes;
 }
 
+static int
+psutil_file_to_struct_with_except(char *path, void *fstruct, size_t size) {
+    int fd;
+    ssize_t nbytes;
+    fd = open(path, O_RDONLY);
+    if (fd == -1) {
+        //PyErr_SetFromErrnoWithFilename(PyExc_OSError, path);
+        return 0;
+    }
+    nbytes = read(fd, fstruct, size);
+    if (nbytes == -1) {
+        close(fd);
+        //PyErr_SetFromErrno(PyExc_OSError);
+        return 0;
+    }
+    if (nbytes > (ssize_t) size) {
+        close(fd);
+        //PyErr_SetString(
+        //    PyExc_RuntimeError, "read() file structure size mismatch");
+        return 0;
+    }
+    close(fd);
+    return nbytes;
+}
 
 /*
  * Return process ppid, rss, vms, ctime, nice, nthreads, status and tty
@@ -472,8 +505,9 @@ psutil_proc_num_ctx_switches(PyObject *self, PyObject *args) {
  *    http://www.brendangregg.com/Solaris/paper_diskubyp1.pdf
  *    ...they should be meaningless anyway.
  *
+*/
 static PyObject*
-proc_io_counters(PyObject* self, PyObject* args) {
+psutil_proc_io_counters(PyObject* self, PyObject* args) {
     int pid;
     char path[1000];
     prusage_t info;
@@ -496,7 +530,6 @@ proc_io_counters(PyObject* self, PyObject* args) {
                          info.pr_inblk,
                          info.pr_oublk);
 }
-*/
 
 
 /*
@@ -1629,6 +1662,215 @@ error:
     return NULL;
 }
 
+//WHATAP PERF TUNING 
+//
+static PyObject* psutil_proc_total_info (PyObject* self, PyObject* args) {
+    DIR* proc_dir;
+    struct dirent* entry;
+    char path[1000];
+    int total_processes = 0;
+    int total_threads = 0;
+    int defunct_processes = 0;
+    psinfo_t info;
+
+    proc_dir = opendir("/proc");
+    if (proc_dir == NULL) {
+        PyErr_SetFromErrno(PyExc_OSError);
+        return NULL;
+    }
+
+    while ((entry = readdir(proc_dir)) != NULL) {
+        if (!isdigit(entry->d_name[0])) {
+            continue;  // Ignore non-PID entries
+        }
+
+        int pid = atoi(entry->d_name);
+        if (pid == 0 || pid == 2) {  
+            continue;  // Exclude PID 0 and 2 sched, pageout
+        }
+
+        snprintf(path, sizeof(path), "/proc/%s/psinfo", entry->d_name);
+        if (!psutil_file_to_struct_with_except(path, (void *)&info, sizeof(info))) {
+            continue;
+        }
+
+        if (info.pr_ppid == 2) {
+            continue;
+        }
+
+        total_processes++;
+
+        if (info.pr_lwp.pr_state == SZOMB) {
+            defunct_processes += 1;
+        } else {
+            total_threads += info.pr_nlwp;
+        }
+    }
+    closedir(proc_dir);
+
+    return Py_BuildValue("(iii)", total_processes, total_threads, defunct_processes);
+}
+
+static PyObject* psutil_proc_detail_info (PyObject* self, PyObject* args) {
+    DIR* proc_dir;
+    struct dirent* entry;
+    char path[1000];
+    char exePath[1000];
+    int len;
+
+    psinfo_t info;
+    pstatus_t status;
+    prusage_t usage;
+    struct passwd *pw;
+
+    PyObject *py_retdict = PyDict_New();
+    PyObject *py_proc_info = NULL;
+    PyObject *py_args = NULL;
+    PyObject *py_name = NULL;
+    PyObject *py_exe = NULL;
+    PyObject *py_username = NULL;
+
+    if (! py_retdict)
+        return PyErr_NoMemory();
+
+    proc_dir = opendir("/proc");
+    if (proc_dir == NULL) {
+        PyErr_SetFromErrno(PyExc_OSError);
+        return NULL;
+    }
+
+    while ((entry = readdir(proc_dir)) != NULL) {
+        if (!isdigit(entry->d_name[0])) {
+            continue;  // Ignore non-PID entries
+        }
+
+        int pid = atoi(entry->d_name);
+        if (pid == 0 || pid == 2) {  
+            continue;  // Exclude PID 0 and 2 sched, pageout
+        }
+
+        snprintf(path, sizeof(path), "/proc/%d/psinfo", pid);
+        if (!psutil_file_to_struct_with_except(path, (void *)&info, sizeof(info))) {
+            continue;
+        }
+
+        if (info.pr_ppid == 2) {
+            continue;
+        }
+
+        snprintf(path, sizeof(path), "/proc/%d/status", pid);
+        if (! psutil_file_to_struct_with_except(path, (void *)&status, sizeof(status))) {
+            continue;
+        }
+
+        snprintf(path, sizeof(path), "/proc/%d/path/a.out", pid);
+        len = readlink(path, exePath, sizeof(exePath) - 1);
+        if (len == -1) {
+            continue;
+        }
+        exePath[len] = '\0';
+
+        snprintf(path, sizeof(path), "/proc/%d/usage", pid);
+        if (! psutil_file_to_struct_with_except(path, (void *)&usage, sizeof(usage))) {
+            continue;
+        }
+
+
+
+        py_exe = PyUnicode_DecodeFSDefault(exePath); // exe 
+        if (!py_exe) {
+            Py_XDECREF(py_exe);
+            continue;
+        }
+
+
+        py_name = PyUnicode_DecodeFSDefault(info.pr_fname); // name
+        if (!py_name){
+            Py_XDECREF(py_exe);
+            Py_XDECREF(py_name);
+            continue;
+        }
+
+
+
+        /*
+        if (info.pr_argc && strlen(info.pr_psargs) == PRARGSZ-1) {
+            argv = psutil_read_raw_args(info, procfs_path, &argc);
+            if (argv) {
+                joined = cstrings_array_to_string(&argv_plain, argv, argc, ' ');
+                if (joined > 0) {
+                    py_args = PyUnicode_DecodeFSDefault(argv_plain);
+                    free(argv_plain);
+                } else if (joined < 0) {
+                    goto error;
+                }
+
+                psutil_free_cstrings_array(argv, argc);
+            }
+        }*/
+
+        //cmdline
+        py_args = PyUnicode_DecodeFSDefault(info.pr_psargs);
+        if (!py_args) {
+            Py_XDECREF(py_exe);
+            Py_XDECREF(py_name);
+            Py_XDECREF(py_args);
+            continue;
+        }
+
+        pw = getpwuid((int)info.pr_euid);
+        if (pw == NULL) {
+            Py_XDECREF(py_exe);
+            Py_XDECREF(py_name);
+            Py_XDECREF(py_args);
+            continue;
+        }
+
+        py_username = PyUnicode_DecodeFSDefault(pw->pw_name); // exe 
+        if (!py_exe) {
+            Py_XDECREF(py_exe);
+            Py_XDECREF(py_name);
+            Py_XDECREF(py_args);
+            Py_XDECREF(py_username);
+            continue;
+        }
+
+        py_proc_info = Py_BuildValue(
+                "(iiOOOOkkdiiddkkk)",
+                pid,
+                info.pr_ppid,
+                py_name, // name
+                py_args, // cmdline
+                py_exe, // exe
+                py_username, //username
+                info.pr_rssize * 1024,            // rss
+                info.pr_size * 1024,              // vms
+                PSUTIL_TV2DOUBLE(info.pr_start),  // create time
+                info.pr_nlwp,              // no. of threads
+                info.pr_lwp.pr_state,      // status code
+                PSUTIL_TV2DOUBLE(status.pr_utime),
+                PSUTIL_TV2DOUBLE(status.pr_stime),
+                usage.pr_ioch,
+                usage.pr_inblk,
+                usage.pr_oublk
+                );
+        
+        PyDict_SetItemString(py_retdict, entry->d_name, py_proc_info);
+
+        Py_DECREF(py_exe);
+        Py_DECREF(py_name);
+        Py_DECREF(py_args);
+        Py_DECREF(py_username);
+        Py_CLEAR(py_proc_info);
+    }
+
+    closedir(proc_dir);
+
+    return py_retdict;
+}
+
+
+
 
 /*
  * define the psutil C module methods and initialize the module.
@@ -1644,6 +1886,9 @@ PsutilMethods[] = {
     {"proc_memory_maps", psutil_proc_memory_maps, METH_VARARGS},
     {"proc_name_and_args", psutil_proc_name_and_args, METH_VARARGS},
     {"proc_num_ctx_switches", psutil_proc_num_ctx_switches, METH_VARARGS},
+    {"proc_io_counters", psutil_proc_io_counters, METH_VARARGS},
+    {"proc_total_info", psutil_proc_total_info, METH_VARARGS},
+    {"proc_detail_info", psutil_proc_detail_info, METH_VARARGS},
     {"query_process_thread", psutil_proc_query_thread, METH_VARARGS},
 
     // --- system-related functions

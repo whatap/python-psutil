@@ -43,6 +43,8 @@ __extra__all__ = ["CONN_IDLE", "CONN_BOUND", "PROCFS_PATH"]
 # =====================================================================
 
 
+HAS_PROC_IO_COUNTERS = hasattr(cext, "proc_io_counters")
+
 PAGE_SIZE = cext_posix.getpagesize()
 AF_LINK = cext_posix.AF_LINK
 IS_64_BIT = sys.maxsize > 2**32
@@ -329,6 +331,18 @@ def users():
 # =====================================================================
 # --- processes
 # =====================================================================
+
+###
+
+def proc_total_info():
+    ret = cext.proc_total_info()
+    return ret
+
+
+def proc_detail_info():
+    ret = cext.proc_detail_info()
+    return ret
+
 
 
 def pids():
@@ -725,3 +739,16 @@ class Process:
     @wrap_exceptions
     def wait(self, timeout=None):
         return _psposix.wait_pid(self.pid, timeout, self._name)
+
+
+    if HAS_PROC_IO_COUNTERS:
+        @wrap_exceptions
+        def io_counters(self):
+            try:
+                rc, wc, rb, wb = cext.proc_io_counters(self.pid, self._procfs_path)
+            except OSError:
+                if not pid_exists(self.pid):
+                    raise NoSuchProcess(self.pid, self._name)
+                raise
+            return _common.pio(rc, wc, rb, wb)
+
