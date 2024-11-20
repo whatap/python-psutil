@@ -188,6 +188,10 @@ def disk_usage(path):
                 st = os.statvfs(path)
             else:
                 raise
+        except OSError:
+            return None
+        except Exception:
+            return None
 
     # Total space which is only available to root (unless changed
     # at system level).

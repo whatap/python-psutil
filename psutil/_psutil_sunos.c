@@ -1826,8 +1826,8 @@ static PyObject* psutil_proc_detail_info (PyObject* self, PyObject* args) {
             continue;
         }
 
-        py_username = PyUnicode_DecodeFSDefault(pw->pw_name); // exe 
-        if (!py_exe) {
+        py_username = PyUnicode_DecodeFSDefault(pw->pw_name); // username
+        if (!py_username) {
             Py_XDECREF(py_exe);
             Py_XDECREF(py_name);
             Py_XDECREF(py_args);

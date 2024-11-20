@@ -282,15 +282,6 @@ def _pprint_secs(secs):
 # --- Process class
 # =====================================================================
 
-if hasattr(_psplatform, "proc_total_info"):
-    def proc_total_info():
-        return _psplatform.proc_total_info()
-
-if hasattr(_psplatform, "proc_detail_info"):
-    def proc_detail_info():
-        return _psplatform.proc_detail_info()
-
-
 class Process(object):  # noqa: UP004
     """Represents an OS process with the given PID.
     If PID is omitted current process PID (os.getpid()) is used.
@@ -1608,7 +1599,6 @@ def wait_procs(procs, timeout=None, callback=None):
 # --- CPU related functions
 # =====================================================================
 
-
 def cpu_count(logical=True):
     """Return the number of logical CPUs in the system (same as
     os.cpu_count() in Python 3.4).
@@ -2440,6 +2430,30 @@ def test():  # pragma: no cover
 del memoize_when_activated, division
 if sys.version_info[0] < 3:
     del num, x  # noqa
+
+
+### Whatap
+
+if hasattr(_psplatform, "cpu_stats_detail"):
+    def cpu_stats_detail():
+        return _psplatform.cpu_stats_detail()
+
+if hasattr(_psplatform, "cpu_load"):
+    def cpu_load():
+        return _psplatform.cpu_load()
+
+if hasattr(_psplatform, "virtual_memory_detail"):
+    def virtual_memory_detail():
+        return _psplatform.virtual_memory_detail()
+
+if hasattr(_psplatform, "proc_total_info"):
+    def proc_total_info():
+        return _psplatform.proc_total_info()
+
+if hasattr(_psplatform, "proc_detail_info"):
+    def proc_detail_info():
+        return _psplatform.proc_detail_info()
+
 
 if __name__ == "__main__":
     test()

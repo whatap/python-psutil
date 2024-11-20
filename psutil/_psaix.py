@@ -122,6 +122,7 @@ def swap_memory():
 # =====================================================================
 
 
+
 def cpu_times():
     """Return system-wide CPU times as a named tuple."""
     ret = cext.per_cpu_times()
@@ -186,7 +187,8 @@ def disk_partitions(all=False):
             # Differently from, say, Linux, we don't have a list of
             # common fs types so the best we can do, AFAIK, is to
             # filter by filesystem having a total size > 0.
-            if not disk_usage(mountpoint).total:
+            usage = disk_usage(mountpoint)
+            if not usage or not usage.total:
                 continue
         maxfile = maxpath = None  # set later
         ntuple = _common.sdiskpart(device, mountpoint, fstype, opts,
@@ -552,3 +554,32 @@ class Process:
                     raise NoSuchProcess(self.pid, self._name)
                 raise
             return _common.pio(rc, wc, rb, wb)
+
+
+
+
+### Whatap
+
+def cpu_stats_detail():
+    ret = cext.cpu_stats_detail()
+    return ret
+
+def cpu_load():
+    ret = cext.cpu_load()
+    return ret
+
+def virtual_memory_detail():
+    ret = cext.virtual_memory_detail()
+    return ret
+
+
+def proc_total_info():
+    ret = cext.proc_total_info()
+    return ret
+
+def proc_detail_info():
+    ret = cext.proc_detail_info()
+    return ret
+
+###
+
