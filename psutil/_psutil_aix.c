@@ -59,6 +59,10 @@
 
 
 #define TV2DOUBLE(t)   (((t).tv_nsec * 0.000000001) + (t).tv_sec)
+#define TVU2DOUBLE(t)   (((t).tv_usec * 0.000000001) + (t).tv_sec) // IBM Issue fieldname usec => value nsec, https://www.ibm.com/docs/ko/aix/7.3?topic=g-getprocs-subroutine
+#define XINTFRAC        ((double)(_system_configuration.Xint)/(double)(_system_configuration.Xfrac))
+#define CLK_TICKS_PER_SEC sysconf(_SC_CLK_TCK)
+
 
 /*
  * Read a file content and fills a C structure with it.
@@ -869,14 +873,14 @@ psutil_disk_io_counters(PyObject *self, PyObject *args) {
 
     for (i = 0; i < disk_count; i++) {
         py_disk_info = Py_BuildValue(
-                "KKKKKKK",
+                "KKKKKKd",
                 diskt[i].__rxfers,
                 diskt[i].xfers - diskt[i].__rxfers,
                 diskt[i].rblks * diskt[i].bsize,
                 diskt[i].wblks * diskt[i].bsize,
-                diskt[i].rserv / 1000 / 1000,  // from nano to milli secs
-                diskt[i].wserv / 1000 / 1000,   // from nano to milli secs
-                diskt[i].time
+                (unsigned long long)(diskt[i].rserv * XINTFRAC / 1000 / 1000),  // from nano to milli secs
+                (unsigned long long)(diskt[i].wserv * XINTFRAC / 1000 / 1000),  // from nano to milli secs
+                (double)((double)diskt[i].time * 1000 / CLK_TICKS_PER_SEC) // milli
                 );
         if (py_disk_info == NULL)
             goto error;
@@ -1141,7 +1145,7 @@ static PyObject* psutil_proc_total_info (PyObject* self, PyObject* args) {
 }
 
 static PyObject* psutil_proc_detail_info (PyObject* self, PyObject* args) {
-    struct procsinfo procsinfo;
+    struct procsinfo64 procsinfo;
     char path[100];
     char pidStr[32];
     int len;
@@ -1160,7 +1164,7 @@ static PyObject* psutil_proc_detail_info (PyObject* self, PyObject* args) {
         return PyErr_NoMemory();
 
     int pid = 0;
-    while (0 < getprocs(&procsinfo, (int)sizeof(struct procsinfo), NULL, 0, &pid, 1)) {
+    while (0 < getprocs(&procsinfo, (int)sizeof(struct procsinfo64), NULL, 0, &pid, 1)) {
         unsigned long long pid = procsinfo.pi_pid;
         snprintf(pidStr, sizeof(pidStr), "%llu", pid);
 
@@ -1209,7 +1213,8 @@ static PyObject* psutil_proc_detail_info (PyObject* self, PyObject* args) {
         }
 
         py_proc_info = Py_BuildValue(
-                "(KKOOOKKdiiddK)",
+                //"(KKOOOKKdiiddK)",
+                "(KKOOOKKdiiddKdd)",
                 pid,
                 (unsigned long long) info.pr_ppid,      // parent pid
                 py_name, // name
@@ -1223,7 +1228,10 @@ static PyObject* psutil_proc_detail_info (PyObject* self, PyObject* args) {
                 (int)info.pr_lwp.pr_state,      // status code
                 TV2DOUBLE(status.pr_utime),
                 TV2DOUBLE(status.pr_stime),
-                (unsigned long long) procsinfo.pi_ioch
+                (unsigned long long) procsinfo.pi_ioch,
+                TVU2DOUBLE(procsinfo.pi_ru.ru_utime),
+                TVU2DOUBLE(procsinfo.pi_ru.ru_stime)
+
                 );
         
         PyDict_SetItemString(py_retdict, pidStr, py_proc_info);
@@ -1322,6 +1330,70 @@ static PyObject* psutil_proc_detail_info (PyObject* self, PyObject* args) {
 
 
 
+static PyObject *
+psutil_per_logical_cpu_times(PyObject *self, PyObject *args) {
+    int ncpu, rc, i;
+    long ticks;
+    perfstat_cpu_t *cpu = NULL;
+    perfstat_id_t id;
+    PyObject *py_retlist = PyList_New(0);
+    PyObject *py_cputime = NULL;
+
+    if (py_retlist == NULL)
+        return NULL;
+
+    /* get the number of ticks per second */
+    ticks = sysconf(_SC_CLK_TCK);
+    if (ticks < 0) {
+        PyErr_SetFromErrno(PyExc_OSError);
+        goto error;
+    }
+
+    /* get the number of cpus in ncpu */
+    ncpu = perfstat_cpu(NULL, NULL, sizeof(perfstat_cpu_t), 0);
+    if (ncpu <= 0){
+        PyErr_SetFromErrno(PyExc_OSError);
+        goto error;
+    }
+
+    /* allocate enough memory to hold the ncpu structures */
+    cpu = (perfstat_cpu_t *) malloc(ncpu * sizeof(perfstat_cpu_t));
+    if (cpu == NULL) {
+        PyErr_NoMemory();
+        goto error;
+    }
+
+    strcpy(id.name, "");
+    rc = perfstat_cpu(&id, cpu, sizeof(perfstat_cpu_t), ncpu);
+
+    if (rc <= 0) {
+        PyErr_SetFromErrno(PyExc_OSError);
+        goto error;
+    }
+
+    for (i = 0; i < ncpu; i++) {
+        py_cputime = Py_BuildValue(
+                "(dddd)",
+                (double)cpu[i].user / ticks,
+                (double)cpu[i].sys / ticks,
+                (double)cpu[i].idle / ticks,
+                (double)cpu[i].wait / ticks);
+        if (!py_cputime)
+            goto error;
+        if (PyList_Append(py_retlist, py_cputime))
+            goto error;
+        Py_DECREF(py_cputime);
+    }
+    free(cpu);
+    return py_retlist;
+
+error:
+    Py_XDECREF(py_cputime);
+    Py_DECREF(py_retlist);
+    if (cpu != NULL)
+        free(cpu);
+    return NULL;
+}
 
 
 /*
@@ -1370,6 +1442,7 @@ PsutilMethods[] =
     {"virtual_memory_detail", psutil_virtual_memory_detail, METH_VARARGS},
     {"proc_total_info", psutil_proc_total_info, METH_VARARGS},
     {"proc_detail_info", psutil_proc_detail_info, METH_VARARGS},
+    {"per_logical_cpu_time", psutil_per_logical_cpu_times, METH_VARARGS},
 
     {NULL, NULL, 0, NULL}
 };

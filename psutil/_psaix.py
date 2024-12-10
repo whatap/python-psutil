@@ -581,5 +581,13 @@ def proc_detail_info():
     ret = cext.proc_detail_info()
     return ret
 
+def per_logical_cpu_times():
+    ret = cext.per_logical_cpu_time()
+    return [scputimes(*x) for x in ret]
+
+def logical_cpu_times():
+    ret = cext.per_logical_cpu_time()
+    return scputimes(*[sum(x) for x in zip(*ret)])
+
 ###
 

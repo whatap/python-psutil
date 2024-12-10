@@ -2454,6 +2454,13 @@ if hasattr(_psplatform, "proc_detail_info"):
     def proc_detail_info():
         return _psplatform.proc_detail_info()
 
+if hasattr(_psplatform, "logical_cpu_times"):
+    def logical_cpu_times(percpu=True):
+        if percpu:
+            return _psplatform.per_logical_cpu_times()
+        else:
+            return _psplatform.logical_cpu_times()
+
 
 if __name__ == "__main__":
     test()
