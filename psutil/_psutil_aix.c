@@ -1154,14 +1154,40 @@ static PyObject* psutil_proc_detail_info (PyObject* self, PyObject* args) {
     pstatus_t status;
     struct passwd *pw;
 
-    PyObject *py_retdict = PyDict_New();
     PyObject *py_proc_info = NULL;
     PyObject *py_args = NULL;
     PyObject *py_name = NULL;
     PyObject *py_username = NULL;
 
+    perfstat_cpu_total_t total_cpu;
+
+    int rc;
+    rc = perfstat_cpu_total(NULL, &total_cpu, sizeof(perfstat_cpu_total_t), 1);
+    if (rc <= 0) {
+        PyErr_SetFromErrno(PyExc_OSError);
+        return NULL;
+    }
+
+    perfstat_partition_total_t par;
+
+    rc = perfstat_partition_total(NULL, &par, sizeof(perfstat_partition_total_t), 1);
+    if (rc <= 0) {
+        PyErr_SetFromErrno(PyExc_OSError);
+        return NULL;
+
+    }
+
+    PyObject *py_retdict = PyDict_New();
     if (! py_retdict)
         return PyErr_NoMemory();
+
+
+    int cpuCount;
+    if (par.smt_thrds > 1) {
+        cpuCount = par.online_cpus;
+    } else {
+        cpuCount = total_cpu.ncpus_cfg;
+    }
 
     int pid = 0;
     while (0 < getprocs(&procsinfo, (int)sizeof(struct procsinfo64), NULL, 0, &pid, 1)) {
@@ -1229,8 +1255,8 @@ static PyObject* psutil_proc_detail_info (PyObject* self, PyObject* args) {
                 TV2DOUBLE(status.pr_utime),
                 TV2DOUBLE(status.pr_stime),
                 (unsigned long long) procsinfo.pi_ioch,
-                TVU2DOUBLE(procsinfo.pi_ru.ru_utime),
-                TVU2DOUBLE(procsinfo.pi_ru.ru_stime)
+                TVU2DOUBLE(procsinfo.pi_ru.ru_utime) / cpuCount,
+                TVU2DOUBLE(procsinfo.pi_ru.ru_stime) / cpuCount
 
                 );
         
