@@ -23,7 +23,7 @@
 static PyObject *psutil_proc_cpu_num(PyObject *self, PyObject *args) {
     struct pst_dynamic psd;
     if (pstat_getdynamic(&psd, sizeof(psd), (size_t)1, 0) == -1) {
-        perror("pstat_getdynamic failed");
+        PyErr_SetString(PyExc_RuntimeError, "pstat_getdynamic failed");
         return NULL;
     }
     //return psd.psd_proc_cnt;
@@ -34,7 +34,7 @@ static PyObject *psutil_per_cpu_times(PyObject *self, PyObject *args) {
     //매번 호출 말고 매개변수로 변경 검토
     struct pst_dynamic psd;
     if (pstat_getdynamic(&psd, sizeof(psd), (size_t)1, 0) == -1) {
-        perror("pstat_getdynamic failed");
+        PyErr_SetString(PyExc_RuntimeError, "pstat_getdynamic failed");
         return NULL;
     }
  
@@ -43,7 +43,7 @@ static PyObject *psutil_per_cpu_times(PyObject *self, PyObject *args) {
 
     psp = (struct pst_processor *)malloc(ncpu * sizeof(struct pst_processor));
     if (pstat_getprocessor(psp, sizeof(struct pst_processor), ncpu, 0) == -1) {
-        perror("pstat_getprocessor failed");
+        PyErr_SetString(PyExc_RuntimeError, "pstat_getprocessor failed");
         return NULL;
     }
 
@@ -79,7 +79,7 @@ static PyObject *psutil_per_cpu_times(PyObject *self, PyObject *args) {
 static PyObject *psutil_cpu_load(PyObject *self, PyObject *args) {
     struct pst_dynamic psd;
     if (pstat_getdynamic(&psd, sizeof(psd), (size_t)1, 0) == -1) {
-        perror("pstat_getdynamic failed");
+        PyErr_SetString(PyExc_RuntimeError, "pstat_getdynamic failed");
         return NULL;
     }
     return Py_BuildValue(
@@ -98,7 +98,7 @@ static PyObject *psutil_cpu_load(PyObject *self, PyObject *args) {
 static PyObject *psutil_cpu_stats(PyObject *self, PyObject *args) {
     struct pst_dynamic psd;
     if (pstat_getdynamic(&psd, sizeof(psd), (size_t)1, 0) == -1) {
-        perror("pstat_getdynamic failed");
+        PyErr_SetString(PyExc_RuntimeError, "pstat_getdynamic failed");
         return NULL;
     }
  
@@ -107,7 +107,7 @@ static PyObject *psutil_cpu_stats(PyObject *self, PyObject *args) {
 
     psp = (struct pst_processor *)malloc(ncpu * sizeof(struct pst_processor));
     if (pstat_getprocessor(psp, sizeof(struct pst_processor), ncpu, 0) == -1) {
-        perror("pstat_getprocessor failed");
+        PyErr_SetString(PyExc_RuntimeError, "pstat_getprocessor failed");
         return NULL;
     }
 
@@ -146,7 +146,7 @@ static PyObject *psutil_total_memory(PyObject *self, PyObject *args) {
     struct pst_static pst;
 
     if (pstat_getstatic(&pst, sizeof(pst), (size_t)1, 0) == -1 ) {
-        perror("pstat_getstatic failed");
+        PyErr_SetString(PyExc_RuntimeError, "pstat_getstatic failed");
         return NULL;
     }
     return Py_BuildValue("K", (unsigned long long)pst.physical_memory * (unsigned long long)pst.page_size);
@@ -159,19 +159,19 @@ static PyObject *psutil_virtual_memory(PyObject *self, PyObject *args) {
 
 
     if (pstat_getstatic(&pst, sizeof(pst), (size_t)1, 0) == -1 ) {
-        perror("pstat_getstatic failed");
+        PyErr_SetString(PyExc_RuntimeError, "pstat_getstatic failed");
         return NULL;
     }
 
     int page_size = pst.page_size;
 
     if (pstat_getdynamic(&psd, sizeof(psd), (size_t)1, 0) == -1 ) {
-        perror("pstat_getdynamic failed");
+        PyErr_SetString(PyExc_RuntimeError, "pstat_getdynamic failed");
         return NULL;
     }
 
     if (pstat_getvminfo(&psv, sizeof(psv), (size_t)1, 0) == -1 ) {
-        perror("pstat_getvminfo failed");
+        PyErr_SetString(PyExc_RuntimeError, "pstat_getvminfo failed");
         return NULL;
     }
  
@@ -237,7 +237,7 @@ static PyObject *psutil_boot_time(PyObject *self, PyObject *args) {
     struct pst_static pst;
 
     if (pstat_getstatic(&pst, sizeof(pst), (size_t)1, 0) == -1 ) {
-        perror("pstat_getstatic failed");
+        PyErr_SetString(PyExc_RuntimeError, "pstat_getstatic failed");
         return NULL;
     }
 
@@ -363,11 +363,10 @@ static PyObject *psutil_disk_io_counters(PyObject *self,  PyObject *args) {
     while ((ent = getmntent(mounts)) != NULL) {
         if (stat(ent->mnt_fsname, &sb) == 0) {
             if (pstat_getlv(&psl, sizeof(psl), 0, (int)sb.st_rdev) == -1) {
-                perror("pstat_getlv failed");
-                goto error;
+                //PyErr_SetString(PyExc_RuntimeError, "pstat_getlv failed");
+                continue;
             }
             snprintf(key, sizeof(key), "%s|%s", ent->mnt_dir, ent->mnt_fsname);
-
 
             py_disk_info = Py_BuildValue(
                     "KKKK",
@@ -388,13 +387,6 @@ static PyObject *psutil_disk_io_counters(PyObject *self,  PyObject *args) {
 
     endmntent(mounts);
     return py_retdict;
-
-error:
-    Py_XDECREF(py_disk_info);
-    Py_DECREF(py_retdict);
-    endmntent(mounts);
-    return NULL;
-
 }
 
 
