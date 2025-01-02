@@ -20,6 +20,8 @@
 #include "_psutil_common.h"
 
 
+#define TV2MICRO(t)   (((t).pst_usec * 0.001) + ((t).pst_sec * 1000))
+
 static PyObject *psutil_proc_cpu_num(PyObject *self, PyObject *args) {
     struct pst_dynamic psd;
     if (pstat_getdynamic(&psd, sizeof(psd), (size_t)1, 0) == -1) {
@@ -30,48 +32,37 @@ static PyObject *psutil_proc_cpu_num(PyObject *self, PyObject *args) {
     return Py_BuildValue("i", psd.psd_proc_cnt);
 }
 
+
 static PyObject *psutil_per_cpu_times(PyObject *self, PyObject *args) {
-    //매번 호출 말고 매개변수로 변경 검토
-    struct pst_dynamic psd;
-    if (pstat_getdynamic(&psd, sizeof(psd), (size_t)1, 0) == -1) {
-        PyErr_SetString(PyExc_RuntimeError, "pstat_getdynamic failed");
-        return NULL;
-    }
- 
-    size_t ncpu = psd.psd_proc_cnt;
-    struct pst_processor *psp;
-
-    psp = (struct pst_processor *)malloc(ncpu * sizeof(struct pst_processor));
-    if (pstat_getprocessor(psp, sizeof(struct pst_processor), ncpu, 0) == -1) {
-        PyErr_SetString(PyExc_RuntimeError, "pstat_getprocessor failed");
-        return NULL;
-    }
-
+   struct pst_processor psp;
     PyObject *py_retlist = PyList_New(0);
     PyObject *py_cputime = NULL;
 
     int i = 0;
     //{"USER","NICE","SYS","IDLE","WAIT","BLOCK","SWAIT","INTR","SSYS"};
-    for (i = 0; i < ncpu; i++) {
+    while (pstat_getprocessor(&psp, sizeof(struct pst_processor), 1, i++) > 0) {
+        if (psp.psp_pset_id == -1) continue;
         py_cputime = Py_BuildValue(
-                "(KKKKK)",
-                psp[i].psp_cpu_time[CP_USER],
-                psp[i].psp_cpu_time[CP_SYS],
-                psp[i].psp_cpu_time[CP_IDLE],
-                psp[i].psp_cpu_time[CP_SWAIT] + psp[i].psp_cpu_time[CP_BLOCK],
-                psp[i].psp_cpu_time[CP_NICE]);
+                "(KKKKKK)",
+#ifdef IS_HPUX_11_31
+                psp.psp_core_id,
+#else
+                i-1,
+#endif
+                psp.psp_cpu_time[CP_USER],
+                psp.psp_cpu_time[CP_SYS],
+                psp.psp_cpu_time[CP_IDLE],
+                psp.psp_cpu_time[CP_SWAIT] + psp.psp_cpu_time[CP_BLOCK],
+                psp.psp_cpu_time[CP_NICE]);
         if (!py_cputime) {
-            free(psp);
             return NULL;
         }
         if (PyList_Append(py_retlist, py_cputime)) {
-            free(psp);
             return NULL;
         }
         Py_DECREF(py_cputime);
     }
 
-    free(psp);
     return py_retlist; 
 }
 
@@ -92,6 +83,50 @@ static PyObject *psutil_cpu_load(PyObject *self, PyObject *args) {
 
 }
 
+static PyObject *
+psutil_cpu_stats_detail(PyObject *self, PyObject *args) {
+    struct pst_dynamic psd;
+    if (pstat_getdynamic(&psd, sizeof(psd), (size_t)1, 0) == -1) {
+        PyErr_SetString(PyExc_RuntimeError, "pstat_getdynamic failed");
+        return NULL;
+    }
+
+    struct pst_vminfo psv;
+    if (pstat_getvminfo(&psv, sizeof(psv), (size_t)1, 0) == -1 ) {
+        PyErr_SetString(PyExc_RuntimeError, "pstat_getvminfo failed");
+        return NULL;
+    }
+
+    //unsigned long long runq = 0;
+    unsigned long long runq = psd.psd_rq;
+    unsigned long long blockq = psv.psv_swpque;
+    unsigned long long waitq = psd.psd_sw;
+    unsigned long long fork = psv.psv_cntfork;
+    unsigned long long interrupt = psv.psv_sintr;
+    unsigned long long syscall = psv.psv_ssyscall;
+    unsigned long long ctxsw = psv.psv_sswtch;
+    unsigned long long exec = 0;
+ 
+    struct pst_processor psp;
+
+    int i = 0;
+    while (pstat_getprocessor(&psp, sizeof(struct pst_processor), 1, i++) > 0) {
+        if (psp.psp_pset_id == -1) continue;
+        exec += psp.psp_sysexec;
+    }
+
+    return Py_BuildValue(
+        "KKKKKKKK",
+        ctxsw,
+        interrupt,
+        syscall,
+        fork,
+        exec,
+        runq,
+        blockq,
+        waitq
+    );
+}
 // interrupts
 // syscall
 // ctxswitch
@@ -142,6 +177,60 @@ static PyObject *psutil_cpu_stats(PyObject *self, PyObject *args) {
 }
 
 
+
+
+static PyObject *psutil_virtual_memory_detail(PyObject *self, PyObject *args) {
+    struct pst_static pst;
+    struct pst_dynamic psd;
+    struct pst_vminfo psv;
+
+
+    if (pstat_getstatic(&pst, sizeof(pst), (size_t)1, 0) == -1 ) {
+        PyErr_SetString(PyExc_RuntimeError, "pstat_getstatic failed");
+        return NULL;
+    }
+
+    int page_size = pst.page_size;
+
+    if (pstat_getdynamic(&psd, sizeof(psd), (size_t)1, 0) == -1 ) {
+        PyErr_SetString(PyExc_RuntimeError, "pstat_getdynamic failed");
+        return NULL;
+    }
+
+    if (pstat_getvminfo(&psv, sizeof(psv), (size_t)1, 0) == -1 ) {
+        PyErr_SetString(PyExc_RuntimeError, "pstat_getvminfo failed");
+        return NULL;
+    }
+ 
+    unsigned long long total = (unsigned long long)pst.physical_memory * page_size;
+    unsigned long long free = (unsigned long long)psd.psd_free * page_size;
+    unsigned long long cached = (unsigned long long)psv.psv_kern_dynmem * page_size;
+    unsigned long long used = total - free;
+    unsigned long long available = free;
+    unsigned long long swapin = (unsigned long long)psv.psv_spswpin;
+    unsigned long long swapout = (unsigned long long)psv.psv_spswpout;
+    unsigned long long filein = (unsigned long long)psv.psv_spgpgin;
+    unsigned long long fileout = (unsigned long long)psv.psv_spgpgout;
+    unsigned long long scanned = (unsigned long long)psv.psv_sscan;
+    unsigned long long freed = (unsigned long long)psv.psv_sdfree;
+
+    return Py_BuildValue(
+            "KKKKKiKKKKKK",
+            total,
+            available,
+            used,
+            free,
+            cached,
+            page_size,
+            swapin,
+            swapout,
+            filein,
+            fileout,
+            scanned,
+            freed
+            );
+}
+
 static PyObject *psutil_total_memory(PyObject *self, PyObject *args) {
     struct pst_static pst;
 
@@ -180,8 +269,6 @@ static PyObject *psutil_virtual_memory(PyObject *self, PyObject *args) {
     unsigned long long cached = (unsigned long long)psv.psv_kern_dynmem * page_size;
     unsigned long long used = total - free;
     unsigned long long available = free;
-
-
 
     return Py_BuildValue(
             "KKKKKi",
@@ -268,13 +355,18 @@ static PyObject *psutil_disk_info(PyObject *self,  PyObject *args) {
     } else {
         return NULL;
     }
-    
+
+    struct dirent *entry;
+    struct stat sb;
+
     PyObject *py_retdict = PyDict_New();
     PyObject *py_disk_info = NULL;
 
-    struct dirent *entry;
+    if (py_retdict == NULL) {
+        return NULL;
+    }
 
-    struct stat sb;
+
 
     while ((entry = readdir(dp))) {
         char path[512];
@@ -289,6 +381,7 @@ static PyObject *psutil_disk_info(PyObject *self,  PyObject *args) {
         
 
         if (stat(path, &sb) == 0) {
+
             snprintf(device, sizeof(device), "%d|%d", major(sb.st_rdev), minor(sb.st_rdev));
             py_disk_info = Py_BuildValue(
                     "s",
@@ -308,6 +401,105 @@ static PyObject *psutil_disk_info(PyObject *self,  PyObject *args) {
 
     return py_retdict;
 
+
+}
+
+#define DEV_NAME_LEN 64
+typedef struct disk {
+    int devid;
+    char devname[DEV_NAME_LEN];
+}Disk;
+
+static PyObject *psutil_disk_io_counters(PyObject *self,  PyObject *args) {
+    const char *disk_path = "/dev/disk";
+    const char *dsk_path = "/dev/dsk";
+    const char *dir_path = NULL;
+
+    if (access(dsk_path, F_OK) == 0) {
+        dir_path = dsk_path;
+    } else if (access(disk_path, F_OK) == 0) {
+        dir_path = disk_path;
+    } else {
+        PyErr_SetString(PyExc_RuntimeError, "/dev dir access error");
+        return NULL;
+    }
+    
+    struct dirent **entry;
+    int n;
+
+    Disk * diskMap;
+    struct stat sb;
+
+    n = scandir(dsk_path, &entry, NULL, NULL);
+    
+    if (n < 0) {
+        PyErr_SetString(PyExc_RuntimeError, "dev scan error");
+        return NULL;
+    }
+
+    diskMap = (Disk *) malloc(n * sizeof(Disk));
+    if (diskMap == NULL) {
+        PyErr_SetString(PyExc_RuntimeError, "Disk Map malloc Fail");
+    }
+
+    int i;
+    int j;
+    for (i = 0; i < n; i++) {
+        char path[256];
+        snprintf(path, sizeof(path), "%s/%s", dir_path,  entry[i]->d_name);
+        if (stat(path, &sb) == 0) {
+            diskMap[i].devid = sb.st_rdev;
+            snprintf(diskMap[i].devname, DEV_NAME_LEN, "%s", entry[i]->d_name);
+        } 
+        
+        free(entry[i]);
+    }
+    
+    free(entry);
+
+    struct pst_diskinfo psd;
+    PyObject *py_retdict = PyDict_New();
+    if (py_retdict == NULL) {
+        return NULL;
+    }
+    PyObject *py_disk_info = NULL;
+
+    i = 0;
+    while (pstat_getdisk(&psd, sizeof(psd), 1, i++) > 0) {
+
+        int devid = makedev(psd.psd_dev.psd_major, psd.psd_dev.psd_minor);
+        for(j = 0; j < n; j++) {
+            if (diskMap[j].devid != devid) continue;
+            py_disk_info = Py_BuildValue(
+                "KKKKKKKd",
+                (unsigned long long) psd.psd_dkxfer,
+                (unsigned long long) psd.psd_dkwds * 64LL, //word size 
+#ifdef IS_HPUX_11_31 
+                (unsigned long long) psd.psd_dkread,
+                (unsigned long long) psd.psd_dkwrite,
+                (unsigned long long) psd.psd_dkbyteread,
+                (unsigned long long) psd.psd_dkbytewrite,
+#else
+                (unsigned long long) 0,
+                (unsigned long long) 0,
+                (unsigned long long) 0,
+                (unsigned long long) 0,
+#endif
+                (unsigned long long)psd.psd_dktime * 10, //tick
+                TV2MICRO(psd.psd_dkwait)
+                );
+
+            if (!py_disk_info)
+                continue;
+
+            PyDict_SetItemString(py_retdict, diskMap[j].devname, py_disk_info);
+            Py_CLEAR(py_disk_info);
+
+            break;
+        }
+    }
+
+    return py_retdict;
 }
 
 static PyObject *psutil_disk_io_time(PyObject *self,  PyObject *args) {
@@ -324,7 +516,7 @@ static PyObject *psutil_disk_io_time(PyObject *self,  PyObject *args) {
         
         py_disk_info = Py_BuildValue(
                 "K",
-                psd.psd_dktime * 10
+                psd.psd_dktime * 10 //tick
                 );
 
         if (!py_disk_info)
@@ -338,9 +530,7 @@ static PyObject *psutil_disk_io_time(PyObject *self,  PyObject *args) {
     return py_retdict;
 }
 
-
-
-static PyObject *psutil_disk_io_counters(PyObject *self,  PyObject *args) {
+static PyObject *psutil_fs_io_counters(PyObject *self,  PyObject *args) {
     FILE *mounts;
     struct mntent *ent;
     mounts = setmntent("/etc/mnttab", "r");
@@ -537,6 +727,152 @@ static PyObject *psutil_proc_open_file(PyObject *self, PyObject *args) {
     return py_retdict;
 }
 
+static PyObject* psutil_proc_total_info (PyObject* self, PyObject* args) {
+    int total_threads = 0;
+    int defunct_processes = 0;
+    int idx = 0;
+
+    struct pst_static pst_static;
+    struct pst_status *pst;
+    int max_proc; //default
+
+    if (pstat_getstatic(&pst_static, sizeof(pst_static), 1, 0) == -1) {
+        return NULL;
+    }
+    max_proc = pst_static.max_proc;
+
+
+    pst = malloc(sizeof(struct pst_status) * max_proc);
+    if (pst == NULL) {
+        return NULL;
+    }
+
+    int ret;
+    ret = pstat_getproc(pst, sizeof(struct pst_status), max_proc, 0);
+    if (ret == -1) {
+        free(pst);
+        return NULL;
+    }
+
+    for (idx = 0; idx < ret; idx++) {
+        if (pst[idx].pst_stat == PS_ZOMBIE) {
+            defunct_processes++;
+        }
+        total_threads += pst[idx].pst_nlwps; 
+    }
+
+    free(pst);
+
+
+    return Py_BuildValue("(iii)", ret, total_threads, defunct_processes);
+}
+
+static PyObject* psutil_proc_detail_info (PyObject* self, PyObject* args) {
+    int idx = 0;
+
+    struct pst_static pst_static;
+    struct pst_status *pst;
+    int max_proc; //default
+
+    if (pstat_getstatic(&pst_static, sizeof(pst_static), 1, 0) == -1) {
+        PyErr_SetString(PyExc_RuntimeError, "pstat_getstatic failed");
+        return NULL;
+    }
+    max_proc = pst_static.max_proc;
+
+    pst = malloc(sizeof(struct pst_status) * max_proc);
+    if (pst == NULL) {
+        PyErr_SetString(PyExc_RuntimeError, "malloc failed");
+        return NULL;
+    }
+
+    int ret;
+    ret = pstat_getproc(pst, sizeof(struct pst_status), max_proc, 0);
+    if (ret == -1) {
+        free(pst);
+        PyErr_SetString(PyExc_RuntimeError, "pstat_getproc failed");
+        return NULL;
+    }
+
+
+    PyObject *py_proc_info = NULL;
+    PyObject *py_retdict = PyDict_New();
+    if (! py_retdict)
+        return PyErr_NoMemory();
+    
+
+    char pidStr[32];
+    PyObject * comm = NULL;
+    PyObject * cmdline = NULL;
+    PyObject * username = NULL;
+    char name[32] = {0, };
+
+    for (idx = 0; idx < ret; idx++) {
+        snprintf(pidStr, sizeof(pidStr), "%d", pst[idx].pst_pid);
+        comm= PyUnicode_DecodeFSDefault(pst[idx].pst_ucomm);
+        cmdline = PyUnicode_DecodeFSDefault(pst[idx].pst_cmd);
+        
+        struct passwd *pw = getpwuid(pst[idx].pst_uid);
+        if (pw != NULL) {
+            snprintf(name, sizeof(name), pw->pw_name);
+        } else {
+            snprintf(name, sizeof(name), "unknown");
+        }
+        username = PyUnicode_DecodeFSDefault(name);
+
+        py_proc_info = Py_BuildValue(
+                "(iiOOOKKiiiiifKKKKKKKK)",
+                pst[idx].pst_pid,
+                pst[idx].pst_ppid,
+                comm,
+                cmdline,
+                username,
+                pst[idx].pst_rssize,
+                pst[idx].pst_vssize + pst[idx].pst_vtsize + pst[idx].pst_vdsize + pst[idx].pst_vshmsize + pst[idx].pst_vusize + pst[idx].pst_vmmsize,
+                pst[idx].pst_start,
+                pst[idx].pst_stat,
+                pst[idx].pst_nlwps,
+                pst[idx].pst_utime,
+                pst[idx].pst_stime,
+                pst[idx].pst_pctcpu * 100, // / psd.psd_proc_cnt, // cpu 
+                pst[idx].pst_ioch,
+                pst[idx].pst_vssize,
+                pst[idx].pst_vtsize,
+                pst[idx].pst_vdsize,
+                pst[idx].pst_vshmsize,
+                pst[idx].pst_vusize,
+                pst[idx].pst_vmmsize,
+                pst[idx].pst_cptickstotal
+                );
+        
+        //pss.pst_pid
+        //pss.pst_ppid
+        //comm
+        //cmdline
+        //username
+        //rss
+        //vsz
+        //start
+        //stat
+        //pst_nlwps
+        //utime
+        //stime
+        //pctcpu
+        //pi_ioch
+        
+
+        PyDict_SetItemString(py_retdict, pidStr, py_proc_info);
+        Py_DECREF(comm);
+        Py_DECREF(cmdline);
+        Py_DECREF(username);
+        Py_CLEAR(py_proc_info);
+    }
+
+    free(pst);
+
+    return py_retdict;
+}
+
 static PyObject *psutil_proc_oneshot_info(PyObject *self, PyObject *args) {
     pid_t pid;
 
@@ -545,15 +881,15 @@ static PyObject *psutil_proc_oneshot_info(PyObject *self, PyObject *args) {
         return NULL;
     }
 
-    struct pst_status pss;
+    struct pst_status pst;
 
     PyObject * cmdline = NULL;
     PyObject * username = NULL;
     char name[32] = {0, };
 
-    if (pstat_getproc(&pss, sizeof(pss), 0, pid) > 0) {
-        cmdline = PyUnicode_DecodeFSDefault(pss.pst_cmd);
-        struct passwd *pw = getpwuid(pss.pst_uid);
+    if (pstat_getproc(&pst, sizeof(pst), 0, pid) > 0) {
+        cmdline = PyUnicode_DecodeFSDefault(pst.pst_cmd);
+        struct passwd *pw = getpwuid(pst.pst_uid);
         if (pw != NULL) {
             snprintf(name, sizeof(name), pw->pw_name);
         } else {
@@ -562,20 +898,21 @@ static PyObject *psutil_proc_oneshot_info(PyObject *self, PyObject *args) {
         
         username = PyUnicode_DecodeFSDefault(name);
         PyObject *value = Py_BuildValue(
-                "iiiifKKSSiiii",
-                pss.pst_pid,
-                pss.pst_ppid,
-                pss.pst_utime,
-                pss.pst_stime,
-                pss.pst_pctcpu * 100, // / psd.psd_proc_cnt, // cpu 
-                pss.pst_rssize,  // * pst.page_size,
-                pss.pst_ioch,
+                "iiiifKKSSiiiiK",
+                pst.pst_pid,
+                pst.pst_ppid,
+                pst.pst_utime,
+                pst.pst_stime,
+                pst.pst_pctcpu * 100, // / psd.psd_proc_cnt, // cpu 
+                pst.pst_rssize,  // * pst.page_size,
+                pst.pst_ioch,
                 cmdline,
                 username,
-                pss.pst_stat,
-                pss.pst_start,
-                pss.pst_inblock,
-                pss.pst_oublock
+                pst.pst_stat,
+                pst.pst_start,
+                pst.pst_inblock,
+                pst.pst_oublock,
+                pst.pst_cptickstotal
                 );
 
         Py_DECREF(cmdline);
@@ -594,12 +931,12 @@ static PyObject *psutil_proc_create_time(PyObject *self, PyObject *args) {
         return NULL;
     }
 
-    struct pst_status pss;
+    struct pst_status pst;
 
-    if (pstat_getproc(&pss, sizeof(pss), 0, pid) > 0) {
+    if (pstat_getproc(&pst, sizeof(pst), 0, pid) > 0) {
         PyObject *value = Py_BuildValue(
                 "i",
-                pss.pst_start
+                pst.pst_start
                 );
         return value;
     }
@@ -616,14 +953,14 @@ static PyObject *psutil_proc_disk_io(PyObject *self, PyObject *args) {
         return NULL;
     }
 
-    struct pst_status pss;
+    struct pst_status pst;
 
-    if (pstat_getproc(&pss, sizeof(pss), 0, pid) > 0) {
+    if (pstat_getproc(&pst, sizeof(pst), 0, pid) > 0) {
         PyObject *value = Py_BuildValue(
                 "Kii",
-                pss.pst_ioch,
-                pss.pst_inblock,
-                pss.pst_oublock
+                pst.pst_ioch,
+                pst.pst_inblock,
+                pst.pst_oublock
                 );
         return value;
     }
@@ -641,6 +978,7 @@ PsutilMethods[] = {
     {"swap_memory", psutil_swap_memory, METH_VARARGS},
     {"cpu_load", psutil_cpu_load, METH_VARARGS},
     {"boot_time", psutil_boot_time, METH_VARARGS},
+    {"fs_io_counters", psutil_fs_io_counters, METH_VARARGS},
     {"disk_io_counters", psutil_disk_io_counters, METH_VARARGS},
     {"disk_io_info", psutil_disk_info, METH_VARARGS},
     {"disk_io_time", psutil_disk_io_time, METH_VARARGS},
@@ -650,6 +988,10 @@ PsutilMethods[] = {
     {"proc_disk_io", psutil_proc_disk_io, METH_VARARGS},
     {"proc_create_time", psutil_proc_create_time, METH_VARARGS},
     {"proc_open_file", psutil_proc_open_file, METH_VARARGS},
+    {"cpu_stats_detail", psutil_cpu_stats_detail, METH_VARARGS},
+    {"virtual_memory_detail", psutil_virtual_memory_detail, METH_VARARGS},
+    {"proc_total_info", psutil_proc_total_info, METH_VARARGS},
+    {"proc_detail_info", psutil_proc_detail_info, METH_VARARGS},
     {NULL, NULL, 0, NULL}
 };
 

@@ -55,13 +55,17 @@ cpuloads = namedtuple('cpuloads', ['load1', 'load5', 'load15'])
 
 def cpu_times():
     ret = cext.per_cpu_times()
-    return scputimes(*[sum(x) for x in zip(*ret)])
+    return scputimes(*[sum(x) for x in zip(*ret)[1:]])
 
 
 def per_cpu_times():
     """Return system per-CPU times as a list of named tuples."""
-    ret = cext.per_cpu_times()
-    return [scputimes(*x) for x in ret]
+    cputimes = cext.per_cpu_times()
+    ret = {}
+
+    for x in cputimes:
+        ret[x[0]] = scputimes(*x[1:])
+    return ret
 
 def cpu_count_logical():
     return cext.proc_cpu_num()
@@ -135,7 +139,31 @@ def getDsfMap():
     return device_map
 
 
+gDiskMap = None
+def getDiskMap():
+    global gDiskMap
+    if gDiskMap != None:
+        return gDiskMap
+
+    lvmMap = getLvmMap
+    diskMap = {}
+
+    for vg, disks in lvmMap.items():
+        for disk in disks:
+            if disk not in diskMap:
+                diskMap[disk] = None
+            diskMap[disk].add(vg)
+    diskMap = {disk: list(vgs) for disk, vgs in diskMap.items()}
+    gDiskMap = diskMap
+    return diskMap
+
+
+gLvmMap = None
 def getLvmMap():
+    global gLvmMap
+    if gLvmMap != None:
+        return gLvmMap
+
     try:
         with open('/etc/lvmtab', 'rb') as lvmtabFile:
             lvm = lvmtabFile.read()
@@ -168,11 +196,45 @@ def getLvmMap():
             vg_map[current_vg].append(pv)
             continue
 
+    gLvmMap = vg_map
     return vg_map
 
 
-def disk_io_counters(perdisk=False):
-    ioCounters = cext.disk_io_counters()
+def disk_io_counters_lv(perdisk=False):
+    ioCounters = cext.fs_io_counters()
+    vg_pattern = re.compile(r'/dev/vg\w+')
+ 
+    vgIoMap = {}
+    for k, v in ioCounters.items():
+        keyArr = k.split('|')
+        vg_match = vg_pattern.match(keyArr[1])
+        if vg_match:
+            currentVg = vg_match.group(0)
+            if currentVg in vgIoMap:
+                vgIoMap[currentVg] = [x + y for x, y in zip(vgIoMap[currentVg], v)]
+            else:
+                vgIoMap[currentVg] = v
+    
+    lvmMap = getLvmMap()
+    diskMap = {}
+
+    for k, values in lvmMap.items():
+        if k not in vgIoMap:
+            continue
+
+        io = vgIoMap[k] 
+        for v in values:
+            if v in diskMap:
+                diskMap[v] = [x + y for x, y in zip(diskMap[v], io)]
+            else:
+                diskMap[v] = io
+
+    return diskMap
+
+
+
+def fs_io_counters(perdisk=False):
+    ioCounters = cext.fs_io_counters()
     infos = cext.disk_io_info()
     times = cext.disk_io_time()
     vg_map = getLvmMap()
@@ -214,7 +276,7 @@ def disk_io_counters(perdisk=False):
                 times[pv_match] = ioTimeMap[pv_match]
                 continue
             
-        ret[keyArr[0]] = (v[0], v[1], v[2], v[3], 0, 0, times)
+        ret[keyArr[0]] = sdiskio(v[0], v[1], v[2], v[3], 0, 0, times)
     return ret
 
 
@@ -222,6 +284,10 @@ def net_io_counters(pernic=False):
     ret = cext.net_io_counters()
     return ret
 
+##
+def disk_io_counters_hpux(perdisk=False):
+    ret = cext.disk_io_counters()
+    return ret
 
 #
 #
@@ -285,9 +351,10 @@ kinfo_proc_map = dict(
         starttime=10,
         inblock=11,
         outblock=12,
+        cputickstotal=13,
 )
 
-pcputimes = namedtuple('pcputimes', ['user', 'system', 'pcpu'])
+pcputimes = namedtuple('pcputimes', ['user', 'system', 'pcpu', 'cputickstotal'])
 pmem = namedtuple('pmem', ['rss'])
 
 pio = namedtuple('pio', ['read_count', 'write_count',
@@ -393,7 +460,7 @@ class Process:
     @wrap_exceptions
     def cpu_times(self):
         v = self.oneshot_info()
-        times = (v[kinfo_proc_map['utime']], v[kinfo_proc_map['stime']], v[kinfo_proc_map['pcpu']])
+        times = (v[kinfo_proc_map['utime']], v[kinfo_proc_map['stime']], v[kinfo_proc_map['pcpu']], v[kinfo_proc_map['cputickstotal']])
         return pcputimes(*times)
 
     @wrap_exceptions
@@ -410,3 +477,23 @@ class Process:
             retlist.append(_common.popenfile(path, int(fd)))
         return retlist 
         
+
+
+
+def cpu_stats_detail():
+    ret = cext.cpu_stats_detail()
+    return ret
+
+def virtual_memory_detail():
+    ret = cext.virtual_memory_detail()
+    return ret
+
+def proc_total_info():
+    ret = cext.proc_total_info()
+    return ret
+
+def proc_detail_info():
+    ret = cext.proc_detail_info()
+    return ret
+
+

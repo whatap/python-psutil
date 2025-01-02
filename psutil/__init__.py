@@ -2462,5 +2462,15 @@ if hasattr(_psplatform, "logical_cpu_times"):
             return _psplatform.logical_cpu_times()
 
 
+if hasattr(_psplatform, "fs_io_counters"):
+    def fs_io_counters():
+        return _psplatform.fs_io_counters()
+
+if hasattr(_psplatform, "disk_io_counters_hpux"):
+    def disk_io_counters_hpux():
+        return _psplatform.disk_io_counters_hpux()
+
+
+
 if __name__ == "__main__":
     test()

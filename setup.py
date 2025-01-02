@@ -331,6 +331,11 @@ elif AIX:
         **py_limited_api)
 elif HPUX:
     macros.append(("PSUTIL_HPUX", 1))
+    macros.append(("_PSTAT64", 1)) #64bit struct 
+    rel = platform.release()
+    if rel.endswith("11.31"):
+        macros.append(("IS_HPUX_11_31", 1))
+
     ext = Extension(
         'psutil._psutil_hpux',
         sources=sources + ['psutil/_psutil_hpux.c'],
