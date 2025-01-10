@@ -314,77 +314,6 @@ error:
 }
 
 
-#ifdef CURR_VERSION_THREAD
-
-/*
- * Retrieves all threads used by process returning a list of tuples
- * including thread id, user time and system time.
- */
-static PyObject *
-psutil_proc_threads(PyObject *self, PyObject *args) {
-    long pid;
-    PyObject *py_retlist = PyList_New(0);
-    PyObject *py_tuple = NULL;
-    perfstat_thread_t *threadt = NULL;
-    perfstat_id_t id;
-    int i, rc, thread_count;
-
-    if (py_retlist == NULL)
-        return NULL;
-    if (! PyArg_ParseTuple(args, "l", &pid))
-        goto error;
-
-    /* Get the count of threads */
-    thread_count = perfstat_thread(NULL, NULL, sizeof(perfstat_thread_t), 0);
-    if (thread_count <= 0) {
-        PyErr_SetFromErrno(PyExc_OSError);
-        goto error;
-    }
-
-    /* Allocate enough memory */
-    threadt = (perfstat_thread_t *)calloc(thread_count,
-            sizeof(perfstat_thread_t));
-    if (threadt == NULL) {
-        PyErr_NoMemory();
-        goto error;
-    }
-
-    strcpy(id.name, "");
-    rc = perfstat_thread(&id, threadt, sizeof(perfstat_thread_t),
-            thread_count);
-    if (rc <= 0) {
-        PyErr_SetFromErrno(PyExc_OSError);
-        goto error;
-    }
-
-    for (i = 0; i < thread_count; i++) {
-        if (threadt[i].pid != pid)
-            continue;
-
-        py_tuple = Py_BuildValue("Idd",
-                threadt[i].tid,
-                threadt[i].ucpu_time,
-                threadt[i].scpu_time);
-        if (py_tuple == NULL)
-            goto error;
-        if (PyList_Append(py_retlist, py_tuple))
-            goto error;
-        Py_DECREF(py_tuple);
-    }
-    free(threadt);
-    return py_retlist;
-
-error:
-    Py_XDECREF(py_tuple);
-    Py_DECREF(py_retlist);
-    if (threadt != NULL)
-        free(threadt);
-    return NULL;
-}
-
-#endif
-
-
 #ifdef CURR_VERSION_PROCESS
 
 static PyObject *
@@ -1435,9 +1364,6 @@ PsutilMethods[] =
     {"proc_cred", psutil_proc_cred, METH_VARARGS},
     {"proc_environ", psutil_proc_environ, METH_VARARGS},
     {"proc_name", psutil_proc_name, METH_VARARGS},
-#ifdef CURR_VERSION_THREAD
-    {"proc_threads", psutil_proc_threads, METH_VARARGS},
-#endif
 #ifdef CURR_VERSION_PROCESS
     {"proc_io_counters", psutil_proc_io_counters, METH_VARARGS},
 #endif
