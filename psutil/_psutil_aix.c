@@ -51,6 +51,7 @@
 #include <unistd.h>
 #include <pwd.h>
 
+#include "_psutil_aix.h"
 #include "_psutil_common.h"
 #include "_psutil_posix.h"
 #include "arch/aix/ifaddrs.h"
@@ -701,7 +702,7 @@ static PyObject *
 psutil_per_cpu_times(PyObject *self, PyObject *args) {
     int ncpu, rc, i;
     long ticks;
-    perfstat_cpu_t *cpu = NULL;
+    perfstat_cpu_compatible_t *cpu = NULL;
     perfstat_id_t id;
     PyObject *py_retlist = PyList_New(0);
     PyObject *py_cputime = NULL;
@@ -717,21 +718,30 @@ psutil_per_cpu_times(PyObject *self, PyObject *args) {
     }
 
     /* get the number of cpus in ncpu */
-    ncpu = perfstat_cpu(NULL, NULL, sizeof(perfstat_cpu_t), 0);
+    ncpu = perfstat_cpu(NULL, NULL, sizeof(perfstat_cpu_compatible_t), 0);
     if (ncpu <= 0){
         PyErr_SetFromErrno(PyExc_OSError);
         goto error;
     }
 
+    /*
+    perfstat_cpu_total_t cpu_total;
+
+    if (perfstat_cpu_total(NULL, &cpu_total, sizeof(perfstat_cpu_total_t), 1) == -1) {
+        PyErr_SetFromErrno(PyExc_OSError);
+        goto error;
+    }
+    ncpu = cpu_total.ncpus;
+    */
     /* allocate enough memory to hold the ncpu structures */
-    cpu = (perfstat_cpu_t *) malloc(ncpu * sizeof(perfstat_cpu_t));
+    cpu = (perfstat_cpu_compatible_t *) malloc(ncpu * sizeof(perfstat_cpu_compatible_t));
     if (cpu == NULL) {
         PyErr_NoMemory();
         goto error;
     }
 
     strcpy(id.name, "");
-    rc = perfstat_cpu(&id, cpu, sizeof(perfstat_cpu_t), ncpu);
+    rc = perfstat_cpu(&id, cpu, sizeof(perfstat_cpu_compatible_t), ncpu);
 
     if (rc <= 0) {
         PyErr_SetFromErrno(PyExc_OSError);
@@ -889,7 +899,7 @@ psutil_cpu_stats(PyObject *self, PyObject *args) {
     int ncpu, rc, i;
     // perfstat_cpu_total_t doesn't have invol/vol cswitch, only pswitch
     // which is apparently something else. We have to sum over all cpus
-    perfstat_cpu_t *cpu = NULL;
+    perfstat_cpu_compatible_t *cpu = NULL;
     perfstat_id_t id;
     u_longlong_t cswitches = 0;
     u_longlong_t devintrs = 0;
@@ -897,21 +907,21 @@ psutil_cpu_stats(PyObject *self, PyObject *args) {
     u_longlong_t syscall = 0;
 
     /* get the number of cpus in ncpu */
-    ncpu = perfstat_cpu(NULL, NULL, sizeof(perfstat_cpu_t), 0);
+    ncpu = perfstat_cpu(NULL, NULL, sizeof(perfstat_cpu_compatible_t), 0);
     if (ncpu <= 0){
         PyErr_SetFromErrno(PyExc_OSError);
         goto error;
     }
 
     /* allocate enough memory to hold the ncpu structures */
-    cpu = (perfstat_cpu_t *) malloc(ncpu * sizeof(perfstat_cpu_t));
+    cpu = (perfstat_cpu_compatible_t *) malloc(ncpu * sizeof(perfstat_cpu_compatible_t));
     if (cpu == NULL) {
         PyErr_NoMemory();
         goto error;
     }
 
     strcpy(id.name, "");
-    rc = perfstat_cpu(&id, cpu, sizeof(perfstat_cpu_t), ncpu);
+    rc = perfstat_cpu(&id, cpu, sizeof(perfstat_cpu_compatible_t), ncpu);
 
     if (rc <= 0) {
         PyErr_SetFromErrno(PyExc_OSError);
@@ -1097,9 +1107,9 @@ static PyObject* psutil_proc_detail_info (PyObject* self, PyObject* args) {
         return NULL;
     }
 
-    perfstat_partition_total_t par;
+    perfstat_partition_compatible_total_t par;
 
-    rc = perfstat_partition_total(NULL, &par, sizeof(perfstat_partition_total_t), 1);
+    rc = perfstat_partition_total(NULL, &par, sizeof(perfstat_partition_compatible_total_t), 1);
     if (rc <= 0) {
         PyErr_SetFromErrno(PyExc_OSError);
         return NULL;
@@ -1289,7 +1299,7 @@ static PyObject *
 psutil_per_logical_cpu_times(PyObject *self, PyObject *args) {
     int ncpu, rc, i;
     long ticks;
-    perfstat_cpu_t *cpu = NULL;
+    perfstat_cpu_compatible_t *cpu = NULL;
     perfstat_id_t id;
     PyObject *py_retlist = PyList_New(0);
     PyObject *py_cputime = NULL;
@@ -1305,21 +1315,21 @@ psutil_per_logical_cpu_times(PyObject *self, PyObject *args) {
     }
 
     /* get the number of cpus in ncpu */
-    ncpu = perfstat_cpu(NULL, NULL, sizeof(perfstat_cpu_t), 0);
+    ncpu = perfstat_cpu(NULL, NULL, sizeof(perfstat_cpu_compatible_t), 0);
     if (ncpu <= 0){
         PyErr_SetFromErrno(PyExc_OSError);
         goto error;
     }
 
     /* allocate enough memory to hold the ncpu structures */
-    cpu = (perfstat_cpu_t *) malloc(ncpu * sizeof(perfstat_cpu_t));
+    cpu = (perfstat_cpu_compatible_t *) malloc(ncpu * sizeof(perfstat_cpu_compatible_t));
     if (cpu == NULL) {
         PyErr_NoMemory();
         goto error;
     }
 
     strcpy(id.name, "");
-    rc = perfstat_cpu(&id, cpu, sizeof(perfstat_cpu_t), ncpu);
+    rc = perfstat_cpu(&id, cpu, sizeof(perfstat_cpu_compatible_t), ncpu);
 
     if (rc <= 0) {
         PyErr_SetFromErrno(PyExc_OSError);
