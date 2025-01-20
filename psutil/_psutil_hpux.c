@@ -52,7 +52,7 @@ static PyObject *psutil_per_cpu_times(PyObject *self, PyObject *args) {
                 psp.psp_cpu_time[CP_USER],
                 psp.psp_cpu_time[CP_SYS],
                 psp.psp_cpu_time[CP_IDLE],
-                psp.psp_cpu_time[CP_SWAIT] + psp.psp_cpu_time[CP_BLOCK],
+                psp.psp_cpu_time[CP_SWAIT] + psp.psp_cpu_time[CP_BLOCK] + psp.psp_cpu_time[CP_WAIT],
                 psp.psp_cpu_time[CP_NICE]);
         if (!py_cputime) {
             return NULL;
@@ -99,7 +99,8 @@ psutil_cpu_stats_detail(PyObject *self, PyObject *args) {
 
     //unsigned long long runq = 0;
     unsigned long long runq = psd.psd_rq;
-    unsigned long long blockq = psv.psv_swpque;
+    //unsigned long long blockq = psv.psv_swpque;
+    unsigned long long blockq = psd.psd_dw + psd.psd_pw;
     unsigned long long waitq = psd.psd_sw;
     unsigned long long fork = psv.psv_cntfork;
     unsigned long long interrupt = psv.psv_sintr;
@@ -116,7 +117,7 @@ psutil_cpu_stats_detail(PyObject *self, PyObject *args) {
     }
 
     return Py_BuildValue(
-        "KKKKKKKK",
+        "KKKKKKKKK",
         ctxsw,
         interrupt,
         syscall,
@@ -471,7 +472,7 @@ static PyObject *psutil_disk_io_counters(PyObject *self,  PyObject *args) {
         for(j = 0; j < n; j++) {
             if (diskMap[j].devid != devid) continue;
             py_disk_info = Py_BuildValue(
-                "KKKKKKKd",
+                "KKKKKKKdd",
                 (unsigned long long) psd.psd_dkxfer,
                 (unsigned long long) psd.psd_dkwds * 64LL, //word size 
 #ifdef IS_HPUX_11_31 
@@ -485,8 +486,9 @@ static PyObject *psutil_disk_io_counters(PyObject *self,  PyObject *args) {
                 (unsigned long long) 0,
                 (unsigned long long) 0,
 #endif
-                (unsigned long long)psd.psd_dktime * 10, //tick
-                TV2MICRO(psd.psd_dkwait)
+                (unsigned long long)psd.psd_dktime * 10, //tick *1000 / 100 
+                TV2MICRO(psd.psd_dkwait),
+                TV2MICRO(psd.psd_dkresp)
                 );
 
             if (!py_disk_info)
