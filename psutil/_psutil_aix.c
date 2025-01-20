@@ -1060,11 +1060,6 @@ static PyObject* psutil_proc_total_info (PyObject* self, PyObject* args) {
             continue;  // Ignore non-PID entries
         }
 
-        int pid = atoi(entry->d_name);
-        if (pid == 0 || pid == 1) {  
-            continue;  // Exclude PID 0 and 1
-        }
-
         snprintf(path, sizeof(path), "/proc/%s/psinfo", entry->d_name);
         if (!psutil_file_to_struct_with_except(path, (void *)&info, sizeof(info))) {
             continue;
@@ -1088,6 +1083,7 @@ static PyObject* psutil_proc_detail_info (PyObject* self, PyObject* args) {
     char path[100];
     char pidStr[32];
     int len;
+    long pagesize = psutil_getpagesize();
 
     psinfo_t info;
     pstatus_t status;
@@ -1132,10 +1128,6 @@ static PyObject* psutil_proc_detail_info (PyObject* self, PyObject* args) {
     while (0 < getprocs(&procsinfo, (int)sizeof(struct procsinfo64), NULL, 0, &pid, 1)) {
         unsigned long long pid = procsinfo.pi_pid;
         snprintf(pidStr, sizeof(pidStr), "%llu", pid);
-
-        if (pid == 0 || pid == 1) {
-            continue;  // Exclude PID 0 and 1
-        }
 
         snprintf(path, sizeof(path), "/proc/%llu/psinfo", pid);
         if (!psutil_file_to_struct_with_except(path, (void *)&info, sizeof(info))) {
@@ -1187,7 +1179,7 @@ static PyObject* psutil_proc_detail_info (PyObject* self, PyObject* args) {
                 //py_exe, // exe //cmdline[0]
                 py_username, //username
                 (unsigned long long) info.pr_rssize * 1024,    // rss
-                (unsigned long long) info.pr_size * 1024,      // vms
+                (unsigned long long) procsinfo.pi_dvm * pagesize,      // vms
                 TV2DOUBLE(info.pr_start),  // create time
                 (int)info.pr_nlwp,              // no. of threads
                 (int)info.pr_lwp.pr_state,      // status code
