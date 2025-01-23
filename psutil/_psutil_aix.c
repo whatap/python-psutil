@@ -315,34 +315,6 @@ error:
 }
 
 
-#ifdef CURR_VERSION_PROCESS
-
-static PyObject *
-psutil_proc_io_counters(PyObject *self, PyObject *args) {
-    long pid;
-    int rc;
-    perfstat_process_t procinfo;
-    perfstat_id_t id;
-    if (! PyArg_ParseTuple(args, "l", &pid))
-        return NULL;
-
-    snprintf(id.name, sizeof(id.name), "%ld", pid);
-    rc = perfstat_process(&id, &procinfo, sizeof(perfstat_process_t), 1);
-    if (rc <= 0) {
-        PyErr_SetFromErrno(PyExc_OSError);
-        return NULL;
-    }
-
-    return Py_BuildValue("(KKKK)",
-            procinfo.inOps,      // XXX always 0
-            procinfo.outOps,
-            procinfo.inBytes,    // XXX always 0
-            procinfo.outBytes);
-}
-
-#endif
-
-
 /*
  * Return process user and system CPU times as a Python tuple.
  */
@@ -548,14 +520,13 @@ error:
 }
 
 
-#if defined(CURR_VERSION_NETINTERFACE) && CURR_VERSION_NETINTERFACE >= 3
 
 /*
  * Return a list of tuples for network I/O statistics.
  */
 static PyObject *
 psutil_net_io_counters(PyObject *self, PyObject *args) {
-    perfstat_netinterface_t *statp = NULL;
+    perfstat_netinterface_compatible_t *statp = NULL;
     int tot, i;
     perfstat_id_t first;
 
@@ -567,7 +538,7 @@ psutil_net_io_counters(PyObject *self, PyObject *args) {
 
     /* check how many perfstat_netinterface_t structures are available */
     tot = perfstat_netinterface(
-            NULL, NULL, sizeof(perfstat_netinterface_t), 0);
+            NULL, NULL, sizeof(perfstat_netinterface_compatible_t), 0);
     if (tot == 0) {
         // no network interfaces - return empty dict
         return py_retdict;
@@ -576,15 +547,15 @@ psutil_net_io_counters(PyObject *self, PyObject *args) {
         PyErr_SetFromErrno(PyExc_OSError);
         goto error;
     }
-    statp = (perfstat_netinterface_t *)
-        malloc(tot * sizeof(perfstat_netinterface_t));
+    statp = (perfstat_netinterface_compatible_t *)
+        malloc(tot * sizeof(perfstat_netinterface_compatible_t));
     if (statp == NULL) {
         PyErr_NoMemory();
         goto error;
     }
     strcpy(first.name, FIRST_NETINTERFACE);
     tot = perfstat_netinterface(&first, statp,
-            sizeof(perfstat_netinterface_t), tot);
+            sizeof(perfstat_netinterface_compatible_t), tot);
     if (tot < 0) {
         PyErr_SetFromErrno(PyExc_OSError);
         goto error;
@@ -598,8 +569,11 @@ psutil_net_io_counters(PyObject *self, PyObject *args) {
                 statp[i].ipackets,    /* number of packets received on interface */
                 statp[i].ierrors,     /* number of input errors on interface */
                 statp[i].oerrors,     /* number of output errors on interface */
-                statp[i].if_iqdrops,  /* Dropped on input, this interface */
-                statp[i].xmitdrops    /* number of packets not transmitted */
+                0,
+                0
+                //AIX Old Version Not Suppoer
+                //statp[i].if_iqdrops,  /* Dropped on input, this interface */
+                //statp[i].xmitdrops    /* number of packets not transmitted */
                 );
         if (!py_ifc_info)
             goto error;
@@ -619,7 +593,6 @@ error:
     return NULL;
 }
 
-#endif
 
 
 static PyObject*
@@ -780,7 +753,7 @@ static PyObject *
 psutil_disk_io_counters(PyObject *self, PyObject *args) {
     PyObject *py_retdict = PyDict_New();
     PyObject *py_disk_info = NULL;
-    perfstat_disk_t *diskt = NULL;
+    perfstat_disk_compatible_t *diskt = NULL;
     perfstat_id_t id;
     int i, rc, disk_count;
 
@@ -788,22 +761,22 @@ psutil_disk_io_counters(PyObject *self, PyObject *args) {
         return NULL;
 
     /* Get the count of disks */
-    disk_count = perfstat_disk(NULL, NULL, sizeof(perfstat_disk_t), 0);
+    disk_count = perfstat_disk(NULL, NULL, sizeof(perfstat_disk_compatible_t), 0);
     if (disk_count <= 0) {
         PyErr_SetFromErrno(PyExc_OSError);
         goto error;
     }
 
     /* Allocate enough memory */
-    diskt = (perfstat_disk_t *)calloc(disk_count,
-            sizeof(perfstat_disk_t));
+    diskt = (perfstat_disk_compatible_t *)calloc(disk_count,
+            sizeof(perfstat_disk_compatible_t));
     if (diskt == NULL) {
         PyErr_NoMemory();
         goto error;
     }
 
     strcpy(id.name, FIRST_DISK);
-    rc = perfstat_disk(&id, diskt, sizeof(perfstat_disk_t),
+    rc = perfstat_disk(&id, diskt, sizeof(perfstat_disk_compatible_t),
             disk_count);
     if (rc <= 0) {
         PyErr_SetFromErrno(PyExc_OSError);
@@ -847,10 +820,10 @@ static PyObject *
 psutil_virtual_mem(PyObject *self, PyObject *args) {
     int rc;
     long pagesize = psutil_getpagesize();
-    perfstat_memory_total_t memory;
+    perfstat_memory_total_compatible_t memory;
 
     rc = perfstat_memory_total(
-            NULL, &memory, sizeof(perfstat_memory_total_t), 1);
+            NULL, &memory, sizeof(perfstat_memory_total_compatible_t), 1);
     if (rc <= 0){
         PyErr_SetFromErrno(PyExc_OSError);
         return NULL;
@@ -858,7 +831,7 @@ psutil_virtual_mem(PyObject *self, PyObject *args) {
 
     return Py_BuildValue("KKKKK",
             (unsigned long long) memory.real_total * pagesize,
-            (unsigned long long) memory.real_avail * pagesize,
+            (unsigned long long) (memory.real_total - memory.real_free) * pagesize,
             (unsigned long long) memory.real_free * pagesize,
             (unsigned long long) memory.real_pinned * pagesize,
             (unsigned long long) memory.real_inuse * pagesize
@@ -873,10 +846,10 @@ static PyObject *
 psutil_swap_mem(PyObject *self, PyObject *args) {
     int rc;
     long pagesize = psutil_getpagesize();
-    perfstat_memory_total_t memory;
+    perfstat_memory_total_compatible_t memory;
 
     rc = perfstat_memory_total(
-            NULL, &memory, sizeof(perfstat_memory_total_t), 1);
+            NULL, &memory, sizeof(perfstat_memory_total_compatible_t), 1);
     if (rc <= 0){
         PyErr_SetFromErrno(PyExc_OSError);
         return NULL;
@@ -960,16 +933,16 @@ psutil_cpu_stats_detail(PyObject *self, PyObject *args) {
     int rc;
     // perfstat_cpu_total_t doesn't have invol/vol cswitch, only pswitch
     // which is apparently something else. We have to sum over all cpus
-    perfstat_cpu_total_t total_cpu;
-    perfstat_disk_total_t  disk;
+    perfstat_cpu_total_compatible_t total_cpu;
+    perfstat_disk_total_compatible_t  disk;
 
-    rc = perfstat_cpu_total(NULL, &total_cpu, sizeof(perfstat_cpu_total_t), 1);
+    rc = perfstat_cpu_total(NULL, &total_cpu, sizeof(perfstat_cpu_total_compatible_t), 1);
     if (rc <= 0) {
         PyErr_SetFromErrno(PyExc_OSError);
         return NULL;
     }
 
-    rc = perfstat_disk_total(NULL, &disk, sizeof(perfstat_disk_total_t), 1);
+    rc = perfstat_disk_total(NULL, &disk, sizeof(perfstat_disk_total_compatible_t), 1);
     if (rc <= 0) {
         PyErr_SetFromErrno(PyExc_OSError);
         return NULL;
@@ -985,16 +958,18 @@ psutil_cpu_stats_detail(PyObject *self, PyObject *args) {
         total_cpu.sysexec,
         total_cpu.runque,
         total_cpu.swpque,
-        disk.wq_depth
+        0
+        //old versnion
+        //disk.wq_depth
     );
 }
 
 static PyObject *
 psutil_cpu_load(PyObject *self, PyObject *args) {
     int rc;
-    perfstat_cpu_total_t total_cpu;
+    perfstat_cpu_total_compatible_t total_cpu;
 
-    rc = perfstat_cpu_total(NULL, &total_cpu, sizeof(perfstat_cpu_total_t), 1);
+    rc = perfstat_cpu_total(NULL, &total_cpu, sizeof(perfstat_cpu_total_compatible_t), 1);
     if (rc <= 0) {
         PyErr_SetFromErrno(PyExc_OSError);
         return NULL;
@@ -1016,9 +991,9 @@ static PyObject *
 psutil_virtual_memory_detail(PyObject *self, PyObject *args) {
     int rc;
     long pagesize = psutil_getpagesize();
-    perfstat_memory_total_t memory;
+    perfstat_memory_total_compatible_t memory;
 
-    rc = perfstat_memory_total(NULL, &memory, sizeof(perfstat_memory_total_t), 1);
+    rc = perfstat_memory_total(NULL, &memory, sizeof(perfstat_memory_total_compatible_t), 1);
     if (rc <= 0) {
         PyErr_SetFromErrno(PyExc_OSError);
         return NULL;
@@ -1026,7 +1001,7 @@ psutil_virtual_memory_detail(PyObject *self, PyObject *args) {
 
     return Py_BuildValue("KKKKKKKKKKKK",
         (unsigned long long) memory.real_total * pagesize,
-        (unsigned long long) memory.real_avail * pagesize,
+        (unsigned long long) (memory.real_total-memory.real_free) * pagesize,
         (unsigned long long) memory.real_free * pagesize,
         (unsigned long long) memory.real_pinned * pagesize,
         (unsigned long long) memory.real_inuse * pagesize,
@@ -1094,18 +1069,18 @@ static PyObject* psutil_proc_detail_info (PyObject* self, PyObject* args) {
     PyObject *py_name = NULL;
     PyObject *py_username = NULL;
 
-    perfstat_cpu_total_t total_cpu;
+    perfstat_cpu_total_compatible_t total_cpu;
 
     int rc;
-    rc = perfstat_cpu_total(NULL, &total_cpu, sizeof(perfstat_cpu_total_t), 1);
+    rc = perfstat_cpu_total(NULL, &total_cpu, sizeof(perfstat_cpu_total_compatible_t), 1);
     if (rc <= 0) {
         PyErr_SetFromErrno(PyExc_OSError);
         return NULL;
     }
 
-    perfstat_partition_compatible_total_t par;
+    perfstat_partition_total_compatible_t par;
 
-    rc = perfstat_partition_total(NULL, &par, sizeof(perfstat_partition_compatible_total_t), 1);
+    rc = perfstat_partition_total(NULL, &par, sizeof(perfstat_partition_total_compatible_t), 1);
     if (rc <= 0) {
         PyErr_SetFromErrno(PyExc_OSError);
         return NULL;
@@ -1366,9 +1341,6 @@ PsutilMethods[] =
     {"proc_cred", psutil_proc_cred, METH_VARARGS},
     {"proc_environ", psutil_proc_environ, METH_VARARGS},
     {"proc_name", psutil_proc_name, METH_VARARGS},
-#ifdef CURR_VERSION_PROCESS
-    {"proc_io_counters", psutil_proc_io_counters, METH_VARARGS},
-#endif
     {"proc_num_ctx_switches", psutil_proc_num_ctx_switches, METH_VARARGS},
 
     // --- system-related functions
@@ -1379,9 +1351,7 @@ PsutilMethods[] =
     {"swap_mem", psutil_swap_mem, METH_VARARGS},
     {"users", psutil_users, METH_VARARGS},
     {"virtual_mem", psutil_virtual_mem, METH_VARARGS},
-#if defined(CURR_VERSION_NETINTERFACE) && CURR_VERSION_NETINTERFACE >= 3
     {"net_io_counters", psutil_net_io_counters, METH_VARARGS},
-#endif
     {"cpu_stats", psutil_cpu_stats, METH_VARARGS},
     {"net_connections", psutil_net_connections, METH_VARARGS},
     {"net_if_stats", psutil_net_if_stats, METH_VARARGS},
