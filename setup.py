@@ -341,6 +341,7 @@ elif HPUX:
         sources=sources + ['psutil/_psutil_hpux.c'],
         define_macros=macros,
         libraries=['nm'],
+        extra_link_args=['-static-libgcc'],
         **py_limited_api)
 
 
