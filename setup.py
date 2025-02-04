@@ -335,14 +335,20 @@ elif HPUX:
     rel = platform.release()
     if rel.endswith("11.31"):
         macros.append(("IS_HPUX_11_31", 1))
-
-    ext = Extension(
-        'psutil._psutil_hpux',
-        sources=sources + ['psutil/_psutil_hpux.c'],
-        define_macros=macros,
-        libraries=['nm'],
-        extra_link_args=['-static-libgcc'],
-        **py_limited_api)
+        ext = Extension(
+            'psutil._psutil_hpux',
+            sources=sources + ['psutil/_psutil_hpux.c'],
+            define_macros=macros,
+            libraries=['nm'],
+            **py_limited_api)
+    else:
+        ext = Extension(
+            'psutil._psutil_hpux',
+            sources=sources + ['psutil/_psutil_hpux.c'],
+            define_macros=macros,
+            libraries=['nm'],
+            extra_link_args=['-static-libgcc'],
+            **py_limited_api)
 
 
 else:
