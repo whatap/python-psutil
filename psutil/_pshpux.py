@@ -267,13 +267,15 @@ def fs_io_counters(perdisk=False):
             pv_disk_match = pv_disk_pattern.match(pv)
             if pv_disk_match:
                 pv_match = pv_disk_match.group(1)
-                times[pv_match] = ioTimeMap[pv_match]
+                if pv_match in ioTimeMap:
+                    times[pv_match] = ioTimeMap[pv_match]
                 continue
 
             pv_dsk_match = pv_dsk_pattern.match(pv)
             if pv_dsk_match:
                 pv_match = pv_dsk_match.group(1)
-                times[pv_match] = ioTimeMap[pv_match]
+                if pv_match in ioTimeMap:
+                    times[pv_match] = ioTimeMap[pv_match]
                 continue
             
         ret[keyArr[0]] = sdiskio(v[0], v[1], v[2], v[3], 0, 0, times)
