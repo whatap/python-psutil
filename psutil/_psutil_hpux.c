@@ -814,7 +814,7 @@ static PyObject* psutil_proc_detail_info (PyObject* self, PyObject* args) {
         snprintf(pidStr, sizeof(pidStr), "%d", pst[idx].pst_pid);
         comm = PyUnicode_DecodeFSDefault(pst[idx].pst_ucomm);
         memset(cmdbuf, 0, sizeof(cmdbuf));
-        if (pstat_getcommandline(cmdbuf, sizeof(cmdbuf) - 1, 1, &pst[idx]) > 0 && cmdbuf[0] != '\0') {
+        if (pstat_getcommandline(cmdbuf, sizeof(cmdbuf) - 1, 1, pst[idx].pst_pid) > 0 && cmdbuf[0] != '\0') {
             cmdline = PyUnicode_DecodeFSDefault(cmdbuf);
         } else {
             cmdline = PyUnicode_DecodeFSDefault(pst[idx].pst_cmd);
@@ -898,7 +898,7 @@ static PyObject *psutil_proc_oneshot_info(PyObject *self, PyObject *args) {
 
     if (pstat_getproc(&pst, sizeof(pst), 0, pid) > 0) {
         memset(cmdbuf, 0, sizeof(cmdbuf));
-        if (pstat_getcommandline(cmdbuf, sizeof(cmdbuf) - 1, 1, &pst) > 0 && cmdbuf[0] != '\0') {
+        if (pstat_getcommandline(cmdbuf, sizeof(cmdbuf) - 1, 1, pst.pst_pid) > 0 && cmdbuf[0] != '\0') {
             cmdline = PyUnicode_DecodeFSDefault(cmdbuf);
         } else {
             cmdline = PyUnicode_DecodeFSDefault(pst.pst_cmd);
