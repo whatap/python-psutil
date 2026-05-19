@@ -801,9 +801,10 @@ static PyObject* psutil_proc_detail_info (PyObject* self, PyObject* args) {
     PyObject *py_retdict = PyDict_New();
     if (! py_retdict)
         return PyErr_NoMemory();
-    
+
 
     char pidStr[32];
+    char cmdbuf[1024];
     PyObject * comm = NULL;
     PyObject * cmdline = NULL;
     PyObject * username = NULL;
@@ -811,8 +812,13 @@ static PyObject* psutil_proc_detail_info (PyObject* self, PyObject* args) {
 
     for (idx = 0; idx < ret; idx++) {
         snprintf(pidStr, sizeof(pidStr), "%d", pst[idx].pst_pid);
-        comm= PyUnicode_DecodeFSDefault(pst[idx].pst_ucomm);
-        cmdline = PyUnicode_DecodeFSDefault(pst[idx].pst_cmd);
+        comm = PyUnicode_DecodeFSDefault(pst[idx].pst_ucomm);
+        memset(cmdbuf, 0, sizeof(cmdbuf));
+        if (pstat_getcommandline(cmdbuf, sizeof(cmdbuf) - 1, 1, pst[idx].pst_pid) > 0 && cmdbuf[0] != '\0') {
+            cmdline = PyUnicode_DecodeFSDefault(cmdbuf);
+        } else {
+            cmdline = PyUnicode_DecodeFSDefault(pst[idx].pst_cmd);
+        }
         
         struct passwd *pw = getpwuid(pst[idx].pst_uid);
         if (pw != NULL) {
@@ -888,9 +894,15 @@ static PyObject *psutil_proc_oneshot_info(PyObject *self, PyObject *args) {
     PyObject * cmdline = NULL;
     PyObject * username = NULL;
     char name[32] = {0, };
+    char cmdbuf[1024];
 
     if (pstat_getproc(&pst, sizeof(pst), 0, pid) > 0) {
-        cmdline = PyUnicode_DecodeFSDefault(pst.pst_cmd);
+        memset(cmdbuf, 0, sizeof(cmdbuf));
+        if (pstat_getcommandline(cmdbuf, sizeof(cmdbuf) - 1, 1, pst.pst_pid) > 0 && cmdbuf[0] != '\0') {
+            cmdline = PyUnicode_DecodeFSDefault(cmdbuf);
+        } else {
+            cmdline = PyUnicode_DecodeFSDefault(pst.pst_cmd);
+        }
         struct passwd *pw = getpwuid(pst.pst_uid);
         if (pw != NULL) {
             snprintf(name, sizeof(name), pw->pw_name);
