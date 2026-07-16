@@ -23,10 +23,14 @@
 
 #define TV2MICRO(t)   (((t).pst_usec * 0.001) + ((t).pst_sec * 1000))
 
-/* Initial and maximum buffer sizes for pstat_getcommandline().
- * PA-RISC on HP-UX 11.00/11.11 may return EOVERFLOW when the cmdline
- * does not fit in the initial buffer.  We expand once to CMDLINE_BUF_MAX
- * and retry before falling back to pst_cmd (PST_CLEN ~64 bytes).
+/* Buffer sizes for pstat_getcommandline().
+ * The HP-UX kernel stores at most ~1020 characters of cmdline (per pstat(2)
+ * man page), so CMDLINE_BUF_INIT at 1024 bytes already covers the kernel
+ * limit.  CMDLINE_BUF_MAX is kept as a defensive fallback in case an
+ * EOVERFLOW or ENOSPC is returned on some older HP-UX releases; on those
+ * systems the retry is harmless even if the extra bytes are never filled.
+ * Falls back to pst_cmd (PST_CLEN ~64 bytes) when pstat_getcommandline()
+ * is unavailable or returns an unrecoverable error.
  */
 #define CMDLINE_BUF_INIT 1024
 #define CMDLINE_BUF_MAX  4096
@@ -34,14 +38,17 @@
 /*
  * _hpux_get_cmdline - retrieve the full command line for a process.
  *
- * Calls pstat_getcommandline() with an initial buffer.  On EOVERFLOW or
- * ENOSPC (buffer too small), expands to CMDLINE_BUF_MAX and retries once.
+ * Calls pstat_getcommandline(buf, size, 1, pid) with an initial 1 KB buffer.
+ * The HP-UX kernel caps cmdline at ~1020 chars, so the first call normally
+ * succeeds.  On EOVERFLOW or ENOSPC (returned by some older releases) the
+ * buffer is expanded to CMDLINE_BUF_MAX and the call is retried once.
  * Returns a heap-allocated NUL-terminated string on success; the caller
  * must free() it.  Returns NULL when pstat_getcommandline() is unavailable
- * or fails for any other reason so the caller can fall back to pst_cmd.
+ * or fails, allowing the caller to fall back to the 64-byte pst_cmd field.
  *
- * This function is safe for both PA-RISC (HP-UX 11.00/11.11) and
- * Itanium/IA-64 (HP-UX 11i v2/v3) systems.
+ * Safe for both PA-RISC (HP-UX 11.00/11.11) and Itanium (HP-UX 11i v2/v3).
+ * Signature: pstat_getcommandline(char *buf, size_t elemsize,
+ *                                  size_t elemcount, pid_t pid)
  */
 static char *
 _hpux_get_cmdline(struct pst_status *pst)
@@ -55,7 +62,7 @@ _hpux_get_cmdline(struct pst_status *pst)
 
     memset(buf, 0, CMDLINE_BUF_INIT);
     errno = 0;
-    r = pstat_getcommandline(buf, CMDLINE_BUF_INIT - 1, 1, pst);
+    r = pstat_getcommandline(buf, CMDLINE_BUF_INIT - 1, 1, pst->pst_pid);
 
     if (r > 0 && buf[0] != '\0')
         return buf;  /* success on first attempt */
@@ -70,7 +77,7 @@ _hpux_get_cmdline(struct pst_status *pst)
             return NULL;
         memset(buf, 0, CMDLINE_BUF_MAX);
         errno = 0;
-        r = pstat_getcommandline(buf, CMDLINE_BUF_MAX - 1, 1, pst);
+        r = pstat_getcommandline(buf, CMDLINE_BUF_MAX - 1, 1, pst->pst_pid);
         if (r > 0 && buf[0] != '\0')
             return buf;  /* success after expansion */
     }
