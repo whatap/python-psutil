@@ -14,6 +14,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <errno.h>
 
 #include <Python.h>
 #include <pwd.h>
@@ -21,6 +22,62 @@
 
 
 #define TV2MICRO(t)   (((t).pst_usec * 0.001) + ((t).pst_sec * 1000))
+
+/* Initial and maximum buffer sizes for pstat_getcommandline().
+ * PA-RISC on HP-UX 11.00/11.11 may return EOVERFLOW when the cmdline
+ * does not fit in the initial buffer.  We expand once to CMDLINE_BUF_MAX
+ * and retry before falling back to pst_cmd (PST_CLEN ~64 bytes).
+ */
+#define CMDLINE_BUF_INIT 1024
+#define CMDLINE_BUF_MAX  4096
+
+/*
+ * _hpux_get_cmdline - retrieve the full command line for a process.
+ *
+ * Calls pstat_getcommandline() with an initial buffer.  On EOVERFLOW or
+ * ENOSPC (buffer too small), expands to CMDLINE_BUF_MAX and retries once.
+ * Returns a heap-allocated NUL-terminated string on success; the caller
+ * must free() it.  Returns NULL when pstat_getcommandline() is unavailable
+ * or fails for any other reason so the caller can fall back to pst_cmd.
+ *
+ * This function is safe for both PA-RISC (HP-UX 11.00/11.11) and
+ * Itanium/IA-64 (HP-UX 11i v2/v3) systems.
+ */
+static char *
+_hpux_get_cmdline(struct pst_status *pst)
+{
+    char *buf = NULL;
+    int r;
+
+    buf = (char *)malloc(CMDLINE_BUF_INIT);
+    if (buf == NULL)
+        return NULL;
+
+    memset(buf, 0, CMDLINE_BUF_INIT);
+    errno = 0;
+    r = pstat_getcommandline(buf, CMDLINE_BUF_INIT - 1, 1, pst);
+
+    if (r > 0 && buf[0] != '\0')
+        return buf;  /* success on first attempt */
+
+    /* EOVERFLOW or ENOSPC means the buffer was too small; retry with a
+     * larger buffer.  Any other error means the call is not supported or
+     * the process has no accessible cmdline -- fall through to free+NULL. */
+    if (r < 0 && (errno == EOVERFLOW || errno == ENOSPC)) {
+        free(buf);
+        buf = (char *)malloc(CMDLINE_BUF_MAX);
+        if (buf == NULL)
+            return NULL;
+        memset(buf, 0, CMDLINE_BUF_MAX);
+        errno = 0;
+        r = pstat_getcommandline(buf, CMDLINE_BUF_MAX - 1, 1, pst);
+        if (r > 0 && buf[0] != '\0')
+            return buf;  /* success after expansion */
+    }
+
+    free(buf);
+    return NULL;  /* unsupported or truly failed; caller uses pst_cmd */
+}
 
 static PyObject *psutil_proc_cpu_num(PyObject *self, PyObject *args) {
     struct pst_dynamic psd;
@@ -804,7 +861,7 @@ static PyObject* psutil_proc_detail_info (PyObject* self, PyObject* args) {
 
 
     char pidStr[32];
-    char cmdbuf[1024];
+    char *full_cmd = NULL;
     PyObject * comm = NULL;
     PyObject * cmdline = NULL;
     PyObject * username = NULL;
@@ -813,9 +870,15 @@ static PyObject* psutil_proc_detail_info (PyObject* self, PyObject* args) {
     for (idx = 0; idx < ret; idx++) {
         snprintf(pidStr, sizeof(pidStr), "%d", pst[idx].pst_pid);
         comm = PyUnicode_DecodeFSDefault(pst[idx].pst_ucomm);
-        memset(cmdbuf, 0, sizeof(cmdbuf));
-        if (pstat_getcommandline(cmdbuf, sizeof(cmdbuf) - 1, 1, pst[idx].pst_pid) > 0 && cmdbuf[0] != '\0') {
-            cmdline = PyUnicode_DecodeFSDefault(cmdbuf);
+        /* Use helper that retries with a larger buffer on EOVERFLOW so that
+         * PA-RISC (HP-UX 11.00/11.11) long cmdlines are not truncated.
+         * Falls back to the 64-byte pst_cmd only when pstat_getcommandline()
+         * is genuinely unavailable. */
+        full_cmd = _hpux_get_cmdline(&pst[idx]);
+        if (full_cmd != NULL) {
+            cmdline = PyUnicode_DecodeFSDefault(full_cmd);
+            free(full_cmd);
+            full_cmd = NULL;
         } else {
             cmdline = PyUnicode_DecodeFSDefault(pst[idx].pst_cmd);
         }
@@ -894,12 +957,18 @@ static PyObject *psutil_proc_oneshot_info(PyObject *self, PyObject *args) {
     PyObject * cmdline = NULL;
     PyObject * username = NULL;
     char name[32] = {0, };
-    char cmdbuf[1024];
+    char *full_cmd = NULL;
 
     if (pstat_getproc(&pst, sizeof(pst), 0, pid) > 0) {
-        memset(cmdbuf, 0, sizeof(cmdbuf));
-        if (pstat_getcommandline(cmdbuf, sizeof(cmdbuf) - 1, 1, pst.pst_pid) > 0 && cmdbuf[0] != '\0') {
-            cmdline = PyUnicode_DecodeFSDefault(cmdbuf);
+        /* Use helper that retries with a larger buffer on EOVERFLOW so that
+         * PA-RISC (HP-UX 11.00/11.11) long cmdlines are not truncated.
+         * Falls back to the 64-byte pst_cmd only when pstat_getcommandline()
+         * is genuinely unavailable. */
+        full_cmd = _hpux_get_cmdline(&pst);
+        if (full_cmd != NULL) {
+            cmdline = PyUnicode_DecodeFSDefault(full_cmd);
+            free(full_cmd);
+            full_cmd = NULL;
         } else {
             cmdline = PyUnicode_DecodeFSDefault(pst.pst_cmd);
         }
