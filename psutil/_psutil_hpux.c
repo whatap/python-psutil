@@ -603,13 +603,33 @@ static PyObject *psutil_net_io_counters(PyObject *self, PyObject *args) {
         count = val; 
     close_mib(fd); 
 
+    /* ID_ifNumber counts logical interfaces, which can exceed the number of
+       physical entries get_physical_stat() actually fills (observed on HP-UX
+       11.23 IA: ifNumber=4 but only lan0/lan1/lo0 are filled). Walking up to
+       ifNumber therefore read entries that were never written, and with
+       malloc() those held stale heap bytes, so nm_device[0]=='\0' did not skip
+       them and uninitialised memory leaked out as an interface name. */
+    if (count <= 0) {
+        return PyDict_New();
+    }
+
     nmapi_phystat *ifptr;
     ulen = (unsigned int) count * sizeof(nmapi_phystat);
-    ifptr = (nmapi_phystat *)malloc(ulen);
+    ifptr = (nmapi_phystat *)calloc((size_t) count, sizeof(nmapi_phystat));
+    if (ifptr == NULL) {
+        return PyErr_NoMemory();
+    }
 
     if ((ret = get_physical_stat(ifptr, &ulen)) < 0) {
         free(ifptr);
         return NULL;
+    }
+
+    /* Prefer the number of entries the call reports over ifNumber. The clamp is
+       a no-op if ret is not an entry count on this release, while calloc() above
+       keeps unfilled slots zeroed either way. */
+    if (ret >= 0 && ret < count) {
+        count = ret;
     }
 
     int i = 0;
@@ -619,6 +639,9 @@ static PyObject *psutil_net_io_counters(PyObject *self, PyObject *args) {
     mib_ifEntry *mib;
 
     for (; i < count; i++) {
+        /* A name that fills the field would leave PyDict_SetItemString reading
+           past it; terminate defensively before the string is used. */
+        ifptr[i].nm_device[sizeof(ifptr[i].nm_device) - 1] = '\0';
         if(ifptr[i].nm_device[0] == '\0') {
             continue;
         }
